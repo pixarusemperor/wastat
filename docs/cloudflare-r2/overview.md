@@ -1,0 +1,109 @@
+# Cloudflare R2
+
+> Source: https://developers.cloudflare.com/r2/index.md
+> Snapshot: 2026-08-21
+
+---
+description: Cloudflare R2 is a cost-effective, scalable object storage solution for cloud-native apps, web content, and data lakes without egress fees.
+title: Cloudflare R2
+image: https://developers.cloudflare.com/og-docs.png
+---
+
+[Skip to content](#main-content)
+
+> Documentation Index  
+> Fetch the complete documentation index at: https://developers.cloudflare.com/r2/llms.txt  
+> Use this file to discover all available pages before exploring further.
+
+# Cloudflare R2
+
+Last updated Aug 7, 2026|Copy as Markdown|[View as Markdown](https://developers.cloudflare.com/r2/index.md)|[Agent setup](https://developers.cloudflare.com/agent-setup/)
+
+Object storage for all your data.
+
+Cloudflare R2 Storage allows developers to store large amounts of unstructured data without the costly egress bandwidth fees associated with typical cloud storage services.
+
+You can use R2 for multiple scenarios, including but not limited to:
+
+* Storage for cloud-native applications
+* Cloud storage for web content
+* Storage for podcast episodes
+* Data lakes (analytics and big data)
+* Cloud storage output for large batch processes, such as machine learning model artifacts or datasets
+[Get started](https://developers.cloudflare.com/r2/get-started/)[Browse the examples](https://developers.cloudflare.com/r2/examples/) 
+
+---
+
+## Features
+
+[Location Hints](https://developers.cloudflare.com/r2/reference/data-location/#location-hints)
+
+Location Hints are optional parameters you can provide during bucket creation to indicate the primary geographical location you expect data will be accessed from.
+
+Use Location Hints
+
+[CORS](https://developers.cloudflare.com/r2/buckets/cors/)
+
+Configure CORS to interact with objects in your bucket and configure policies on your bucket.
+
+Use CORS
+
+[Public buckets](https://developers.cloudflare.com/r2/buckets/public-buckets/)
+
+Public buckets expose the contents of your R2 bucket directly to the Internet.
+
+Use Public buckets
+
+[Bucket scoped tokens](https://developers.cloudflare.com/r2/api/tokens/)
+
+Create bucket scoped tokens for granular control over who can access your data.
+
+Use Bucket scoped tokens
+
+---
+
+## Related products
+
+[R2 Data Catalog](https://developers.cloudflare.com/r2-data-catalog/)
+
+A managed [Apache Iceberg ↗](https://iceberg.apache.org/) data catalog built directly into your R2 bucket, so you can turn a bucket into a data warehouse or lakehouse queryable by engines like Spark, Snowflake, and R2 SQL.
+
+[Workers](https://developers.cloudflare.com/workers/)
+
+A [serverless ↗](https://www.cloudflare.com/learning/serverless/what-is-serverless/) execution environment that allows you to create entirely new applications or augment existing ones without configuring or maintaining infrastructure.
+
+[Stream](https://developers.cloudflare.com/stream/)
+
+Upload, store, encode, and deliver live and on-demand video with one API, without configuring or maintaining infrastructure.
+
+[Images](https://developers.cloudflare.com/images/)
+
+A suite of products tailored to your image-processing needs.
+
+---
+
+## More resources
+
+### [Pricing](https://developers.cloudflare.com/r2/pricing)
+
+ Understand pricing for free and paid tier rates.
+
+### [Discord](https://discord.cloudflare.com)
+
+ Ask questions, show off what you are building, and discuss the platform with other developers.
+
+### [Twitter](https://x.com/cloudflaredev)
+
+ Learn about product announcements, new tutorials, and what is new in Cloudflare Workers.
+
+Was this helpful?
+
+YesNo
+
+## On this page
+
+[![](https://developers.cloudflare.com/_astro/logo.te5VL_aD.svg)Docs](https://developers.cloudflare.com/)
+
+```json
+{"@context":"https://schema.org","@type":"WebPage","@id":"https://developers.cloudflare.com/r2/#page","headline":"Overview · Cloudflare R2 docs","description":"Cloudflare R2 is a cost-effective, scalable object storage solution for cloud-native apps, web content, and data lakes without egress fees.","url":"https://developers.cloudflare.com/r2/","inLanguage":"en","image":"https://developers.cloudflare.com/og-docs.png","dateModified":"2026-08-07","publisher":{"@type":"Organization","name":"Cloudflare","url":"https://www.cloudflare.com/"},"isPartOf":{"@type":"WebSite","@id":"https://developers.cloudflare.com/#website","name":"Cloudflare Docs","url":"https://developers.cloudflare.com/"}}
+```

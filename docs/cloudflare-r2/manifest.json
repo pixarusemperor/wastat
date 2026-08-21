@@ -1,0 +1,476 @@
+[
+  {
+    "file": "api.md",
+    "url": "https://developers.cloudflare.com/r2/api/index.md",
+    "sha256": "08a4ca66ffa09cd0bc96c93904a880a628a74b58933e5909733cfbffc556236e",
+    "size": 2422
+  },
+  {
+    "file": "api/error-codes.md",
+    "url": "https://developers.cloudflare.com/r2/api/error-codes/index.md",
+    "sha256": "5db81944aa5a636705e4a70771c31ea87fa5a41287d15d268208f2fb9e015606",
+    "size": 15280
+  },
+  {
+    "file": "api/s3/api.md",
+    "url": "https://developers.cloudflare.com/r2/api/s3/api/index.md",
+    "sha256": "f5e5871729f49ff4cb81a45554cb06376f6a7e559586bd540682d7a8e0f3de0b",
+    "size": 57940
+  },
+  {
+    "file": "api/s3/extensions.md",
+    "url": "https://developers.cloudflare.com/r2/api/s3/extensions/index.md",
+    "sha256": "c41ee0118d4e5f6f30b25bec6f90061e72287e1a854c002d264dc6c6917fb955",
+    "size": 10929
+  },
+  {
+    "file": "api/s3/presigned-urls.md",
+    "url": "https://developers.cloudflare.com/r2/api/s3/presigned-urls/index.md",
+    "sha256": "f147376305e31da1de36430a9aa05fc2ac60ba3980db21458cf9fe72a2d715a2",
+    "size": 12246
+  },
+  {
+    "file": "api/s3/temporary-credentials.md",
+    "url": "https://developers.cloudflare.com/r2/api/s3/temporary-credentials/index.md",
+    "sha256": "c08e01cf9cdd5ec3251454c610edae9d81755d7fc5f877e5cd41365848e0565e",
+    "size": 11170
+  },
+  {
+    "file": "api/tokens.md",
+    "url": "https://developers.cloudflare.com/r2/api/tokens/index.md",
+    "sha256": "219804318818f110bb5ccf72822cadb13a4b6e024faa7e8a6ac20d81d2efc133",
+    "size": 11577
+  },
+  {
+    "file": "api/workers/workers-api-reference.md",
+    "url": "https://developers.cloudflare.com/r2/api/workers/workers-api-reference/index.md",
+    "sha256": "a865964dc885aa3cc4c77d9b5f2f6fbf80d8a1b6393f2aa3b9c6327217306861",
+    "size": 22966
+  },
+  {
+    "file": "api/workers/workers-api-usage.md",
+    "url": "https://developers.cloudflare.com/r2/api/workers/workers-api-usage/index.md",
+    "sha256": "f5cda65ff190645247d7e67c8fb6b8c18777e89230c5dc99a76201b0f22649c5",
+    "size": 15435
+  },
+  {
+    "file": "api/workers/workers-multipart-usage.md",
+    "url": "https://developers.cloudflare.com/r2/api/workers/workers-multipart-usage/index.md",
+    "sha256": "df2e93f4b4b3d8874eea45d13719fb959c94b0b1af66d70acc3cb0485a022e90",
+    "size": 17261
+  },
+  {
+    "file": "buckets.md",
+    "url": "https://developers.cloudflare.com/r2/buckets/index.md",
+    "sha256": "ed487c22969e911db4e668f04bd5b9011ffa055078356bce0ee4bd8e7cd69469",
+    "size": 2552
+  },
+  {
+    "file": "buckets/bucket-locks.md",
+    "url": "https://developers.cloudflare.com/r2/buckets/bucket-locks/index.md",
+    "sha256": "78f1ddb19d7be5835036999cfc4bb43b9255f1019e142e43c013f930ae762c35",
+    "size": 8622
+  },
+  {
+    "file": "buckets/cors.md",
+    "url": "https://developers.cloudflare.com/r2/buckets/cors/index.md",
+    "sha256": "6bdb3191f0697242b5b7bc63061e31176f2e3a82a8241e2475666ea69a07bcf0",
+    "size": 14390
+  },
+  {
+    "file": "buckets/create-buckets.md",
+    "url": "https://developers.cloudflare.com/r2/buckets/create-buckets/index.md",
+    "sha256": "72e147fe6956f656c99c34157651070892b7d1ee63279cab2071865e5471616b",
+    "size": 3736
+  },
+  {
+    "file": "buckets/delete-buckets.md",
+    "url": "https://developers.cloudflare.com/r2/buckets/delete-buckets/index.md",
+    "sha256": "7bf24139ae21fcd870253b8a283c086d100c8c8c445372a7ec6d0d73dfb03d7d",
+    "size": 7411
+  },
+  {
+    "file": "buckets/event-notifications.md",
+    "url": "https://developers.cloudflare.com/r2/buckets/event-notifications/index.md",
+    "sha256": "a92bad0f3baedb34e789860a3c80ac2dbd2ae256577f2e0305b026b76f44000a",
+    "size": 9561
+  },
+  {
+    "file": "buckets/local-uploads.md",
+    "url": "https://developers.cloudflare.com/r2/buckets/local-uploads/index.md",
+    "sha256": "f6602e98f41e7fe12158103075b7919ce54a871e4f76e9e619256971f4b926d4",
+    "size": 5980
+  },
+  {
+    "file": "buckets/object-lifecycles.md",
+    "url": "https://developers.cloudflare.com/r2/buckets/object-lifecycles/index.md",
+    "sha256": "c33d0f606c4f519ea76817785736c0532791294b1251e6cf010ce6c1ffaaccdd",
+    "size": 9096
+  },
+  {
+    "file": "buckets/public-buckets.md",
+    "url": "https://developers.cloudflare.com/r2/buckets/public-buckets/index.md",
+    "sha256": "46103cce6b9a9784fb3a7f4f7f9e5da8946661469203b4c9cfd9c0e2d497ac45",
+    "size": 9970
+  },
+  {
+    "file": "buckets/storage-classes.md",
+    "url": "https://developers.cloudflare.com/r2/buckets/storage-classes/index.md",
+    "sha256": "ac43547993d1c8b88ea50612641317d14ef1ddd007b979dfcbc8b36061686532",
+    "size": 5912
+  },
+  {
+    "file": "data-migration.md",
+    "url": "https://developers.cloudflare.com/r2/data-migration/index.md",
+    "sha256": "cb7b9e35db9abfdc515af53b863a277ef8ffbb8407fedaa4d5099740c9abf274",
+    "size": 3343
+  },
+  {
+    "file": "data-migration/migration-strategies.md",
+    "url": "https://developers.cloudflare.com/r2/data-migration/migration-strategies/index.md",
+    "sha256": "87775f1d33fd0f1476cb33c555640fc3c977ebe1f2dc6931b7c596c5d443647e",
+    "size": 3892
+  },
+  {
+    "file": "data-migration/sippy.md",
+    "url": "https://developers.cloudflare.com/r2/data-migration/sippy/index.md",
+    "sha256": "270559bc526cb7109a8b5e32e6c1282ff8429e0f7eba0eb07e5066d6f7d70c25",
+    "size": 18437
+  },
+  {
+    "file": "data-migration/super-slurper.md",
+    "url": "https://developers.cloudflare.com/r2/data-migration/super-slurper/index.md",
+    "sha256": "73380b0e5bfa1833a04487cfd3ba957149e2b3aa2414a2de7dda5a348823fc64",
+    "size": 7858
+  },
+  {
+    "file": "demos.md",
+    "url": "https://developers.cloudflare.com/r2/demos/index.md",
+    "sha256": "de512098690f14ced84a9088e8a70e59e33b67f73ac46968f85dbe47143db885",
+    "size": 5598
+  },
+  {
+    "file": "examples/authenticate-r2-auth-tokens.md",
+    "url": "https://developers.cloudflare.com/r2/examples/authenticate-r2-auth-tokens/index.md",
+    "sha256": "366af43e5ef55a4f16d6c69ed5f3ab0151917004b05878147f8dcb289253febf",
+    "size": 6490
+  },
+  {
+    "file": "examples/authenticate-r2-temp-credentials.md",
+    "url": "https://developers.cloudflare.com/r2/examples/authenticate-r2-temp-credentials/index.md",
+    "sha256": "4ec8963ff37232d4a243f0df72be37e78be2e812e41600e3259227b44e5928c3",
+    "size": 7848
+  },
+  {
+    "file": "examples/aws/aws-cli.md",
+    "url": "https://developers.cloudflare.com/r2/examples/aws/aws-cli/index.md",
+    "sha256": "0435781949f752fc022cb57ae973d319f10aa51693eddcff50aaaf8602b5d2a3",
+    "size": 3955
+  },
+  {
+    "file": "examples/aws/aws-sdk-go.md",
+    "url": "https://developers.cloudflare.com/r2/examples/aws/aws-sdk-go/index.md",
+    "sha256": "da0ac743d1843e61372ed65e1210eff30e9bdff9f316594f9e72f28f083f17f2",
+    "size": 4411
+  },
+  {
+    "file": "examples/aws/aws-sdk-java.md",
+    "url": "https://developers.cloudflare.com/r2/examples/aws/aws-sdk-java/index.md",
+    "sha256": "a8ffb2ac19e5e3a3e9e2c3054a75224d255ea48824a928d99ea7349c8e8cd5ba",
+    "size": 10063
+  },
+  {
+    "file": "examples/aws/aws-sdk-js-v3.md",
+    "url": "https://developers.cloudflare.com/r2/examples/aws/aws-sdk-js-v3/index.md",
+    "sha256": "42cb0fd2bab35dda796db9a41ddcb4f29f74719434262fd0a03bc655e8ea7465",
+    "size": 7561
+  },
+  {
+    "file": "examples/aws/aws-sdk-js.md",
+    "url": "https://developers.cloudflare.com/r2/examples/aws/aws-sdk-js/index.md",
+    "sha256": "14aae55f7b261b4a6d6dbd2499d53f344065d85ce6f790448417872803c27398",
+    "size": 6503
+  },
+  {
+    "file": "examples/aws/aws-sdk-kotlin.md",
+    "url": "https://developers.cloudflare.com/r2/examples/aws/aws-sdk-kotlin/index.md",
+    "sha256": "46903a3879a5a475d861682395d5f42563e1379effb739b642e5ce047d0ce653",
+    "size": 4720
+  },
+  {
+    "file": "examples/aws/aws-sdk-net.md",
+    "url": "https://developers.cloudflare.com/r2/examples/aws/aws-sdk-net/index.md",
+    "sha256": "1e98c175d6b2cffc1c6aecd40397c30b2d21287aa376f81f383cec754aec75b0",
+    "size": 6086
+  },
+  {
+    "file": "examples/aws/aws-sdk-php.md",
+    "url": "https://developers.cloudflare.com/r2/examples/aws/aws-sdk-php/index.md",
+    "sha256": "0568b4e167fa81361481437c3afe7ddb5a1adc9ff82ddf60ecbdd974a4f6e9b9",
+    "size": 5319
+  },
+  {
+    "file": "examples/aws/aws-sdk-ruby.md",
+    "url": "https://developers.cloudflare.com/r2/examples/aws/aws-sdk-ruby/index.md",
+    "sha256": "69689a3c4246e0df093f7c43dd3d843a27d848aa0f26b82c10ee8aee25b6a887",
+    "size": 3153
+  },
+  {
+    "file": "examples/aws/aws-sdk-rust.md",
+    "url": "https://developers.cloudflare.com/r2/examples/aws/aws-sdk-rust/index.md",
+    "sha256": "dd3b7f3edf6284abb09962e3af509e468675d38ceace26dc9b4ca89a6d58b960",
+    "size": 6868
+  },
+  {
+    "file": "examples/aws/aws4fetch.md",
+    "url": "https://developers.cloudflare.com/r2/examples/aws/aws4fetch/index.md",
+    "sha256": "6044482f22653a0934c0813d7f353e83cb9106a14c17619f730689e904ee764f",
+    "size": 7768
+  },
+  {
+    "file": "examples/aws/boto3.md",
+    "url": "https://developers.cloudflare.com/r2/examples/aws/boto3/index.md",
+    "sha256": "ca8cfa7a8fc6ea3838073cb488562ca9cc93196c92ef8239d61fc5745e42e785",
+    "size": 7786
+  },
+  {
+    "file": "examples/aws/custom-header.md",
+    "url": "https://developers.cloudflare.com/r2/examples/aws/custom-header/index.md",
+    "sha256": "30a13c499e0cf13857def6d2f4c6ca138d92cab391512f5b6b2cf9325e50d3bf",
+    "size": 8238
+  },
+  {
+    "file": "examples/aws/s3mini.md",
+    "url": "https://developers.cloudflare.com/r2/examples/aws/s3mini/index.md",
+    "sha256": "5ebf3b3db579bb4360f92efe13b7bfade5adbce7fd16424857a1ee0b9d8e06dd",
+    "size": 4931
+  },
+  {
+    "file": "examples/cache-api.md",
+    "url": "https://developers.cloudflare.com/r2/examples/cache-api/index.md",
+    "sha256": "99452033e3c3832461a2309fa20315e0d6256699c5c45007296808344e405e46",
+    "size": 3964
+  },
+  {
+    "file": "examples/rclone.md",
+    "url": "https://developers.cloudflare.com/r2/examples/rclone/index.md",
+    "sha256": "c1049c4fecd134dc06f38cc3867547ebd9e8ac30b182197ead2e4d5e581e2163",
+    "size": 6803
+  },
+  {
+    "file": "examples/ssec.md",
+    "url": "https://developers.cloudflare.com/r2/examples/ssec/index.md",
+    "sha256": "fc4071504f3a2144fb62cddba04be69912d77b2a55e8243abc044d931bd59702",
+    "size": 8067
+  },
+  {
+    "file": "examples/terraform-aws.md",
+    "url": "https://developers.cloudflare.com/r2/examples/terraform-aws/index.md",
+    "sha256": "9e4281861c2ffe92ef282c79783207db55e1b72a39ad1d4e52aaa6ff76106dc9",
+    "size": 3968
+  },
+  {
+    "file": "examples/terraform.md",
+    "url": "https://developers.cloudflare.com/r2/examples/terraform/index.md",
+    "sha256": "f43e5ba310a51133c0768fc23c062846b677f661ed91b32b975594437d47a4f1",
+    "size": 2822
+  },
+  {
+    "file": "get-started.md",
+    "url": "https://developers.cloudflare.com/r2/get-started/index.md",
+    "sha256": "ad7bd54fd002945e55a6d0f40da8ae98f3416ce494bab74c855f015e38f35201",
+    "size": 3802
+  },
+  {
+    "file": "get-started/cli.md",
+    "url": "https://developers.cloudflare.com/r2/get-started/cli/index.md",
+    "sha256": "4c35af25dc9e232406ffb316654f9ec790a8f67023cde2f38f0fa4d5462ee6cf",
+    "size": 7546
+  },
+  {
+    "file": "get-started/s3.md",
+    "url": "https://developers.cloudflare.com/r2/get-started/s3/index.md",
+    "sha256": "4ecff283859662f54577c46e788cd290cb114cb2130285734fed54957390c331",
+    "size": 7663
+  },
+  {
+    "file": "get-started/workers-api.md",
+    "url": "https://developers.cloudflare.com/r2/get-started/workers-api/index.md",
+    "sha256": "2200977ddeb9247340b9885674386177a7b72c18b2603330c50bf083f79b9117",
+    "size": 6803
+  },
+  {
+    "file": "how-r2-works.md",
+    "url": "https://developers.cloudflare.com/r2/how-r2-works/index.md",
+    "sha256": "325e03eca219f38c3f302a798e4c675c03ff2f70ad5ea8b33b10ae698ffb4a60",
+    "size": 7282
+  },
+  {
+    "file": "llms.txt",
+    "url": "https://developers.cloudflare.com/r2/llms.txt",
+    "sha256": "6a79f4c35e5647137f7c9d40c88225b70de34510eb1c2ea75353e4b43b2931c5",
+    "size": 15045
+  },
+  {
+    "file": "objects.md",
+    "url": "https://developers.cloudflare.com/r2/objects/index.md",
+    "sha256": "145fc034a4d6b9ac10904f67e524336c7ae513b717506eae18ae3ea450e52776",
+    "size": 2528
+  },
+  {
+    "file": "objects/delete-objects.md",
+    "url": "https://developers.cloudflare.com/r2/objects/delete-objects/index.md",
+    "sha256": "2b4b47f684c3f82f69a1c2787f5f524e5ee70598ae4042cee6b39463af03e172",
+    "size": 5182
+  },
+  {
+    "file": "objects/download-objects.md",
+    "url": "https://developers.cloudflare.com/r2/objects/download-objects/index.md",
+    "sha256": "bcb2779eab19a212c23f3b744312e0792667309eeebd1b68a2d7c9ab5b79af9a",
+    "size": 5117
+  },
+  {
+    "file": "objects/upload-objects.md",
+    "url": "https://developers.cloudflare.com/r2/objects/upload-objects/index.md",
+    "sha256": "b69d5a548d54755950acd6213a1f29e9149280f1ededcd692de3bc25d650dff0",
+    "size": 29906
+  },
+  {
+    "file": "overview.md",
+    "url": "https://developers.cloudflare.com/r2/index.md",
+    "sha256": "4a08feac5db7288b95357633c4bd9115b70669b4e65652e6149109ab998f66e1",
+    "size": 4411
+  },
+  {
+    "file": "platform.md",
+    "url": "https://developers.cloudflare.com/r2/platform/index.md",
+    "sha256": "f4ca8d44849d4c48f13f2be68e2c6b3accc339dbdf61b2672bb2aa506cc40737",
+    "size": 1503
+  },
+  {
+    "file": "platform/audit-logs.md",
+    "url": "https://developers.cloudflare.com/r2/platform/audit-logs/index.md",
+    "sha256": "2c21bcc60fc30a173234accd4958ff19c3607b7afaf9af6a83aa7d9b810bd0e5",
+    "size": 4574
+  },
+  {
+    "file": "platform/event-subscriptions.md",
+    "url": "https://developers.cloudflare.com/r2/platform/event-subscriptions/index.md",
+    "sha256": "12c19dbbc812c71ee830ae281d942aa06ec14fe2f25c55d0bc5bebf7def53ce6",
+    "size": 6995
+  },
+  {
+    "file": "platform/limits.md",
+    "url": "https://developers.cloudflare.com/r2/platform/limits/index.md",
+    "sha256": "99e4f1c58150163716f7a21109944b86c8c23c88820aa793e0447178e6b8d6e5",
+    "size": 6462
+  },
+  {
+    "file": "platform/metrics-analytics.md",
+    "url": "https://developers.cloudflare.com/r2/platform/metrics-analytics/index.md",
+    "sha256": "73e76148e6045615929f14bf0e45a67b926c48c385834f41dd51930e65210816",
+    "size": 9926
+  },
+  {
+    "file": "platform/release-notes.md",
+    "url": "https://developers.cloudflare.com/r2/platform/release-notes/index.md",
+    "sha256": "760d2c30dde908b46efbf26b46f5771834cc22cf707d16c841d674d2241d49e4",
+    "size": 24240
+  },
+  {
+    "file": "platform/troubleshooting.md",
+    "url": "https://developers.cloudflare.com/r2/platform/troubleshooting/index.md",
+    "sha256": "e0ac713518144afea6c0eea0aeffe3b9d05011cfa61b5e9b5a0293962d6fd45e",
+    "size": 6612
+  },
+  {
+    "file": "pricing.md",
+    "url": "https://developers.cloudflare.com/r2/pricing/index.md",
+    "sha256": "9e0094f1e7b9854b6e080017e4b5220295ed798d19506b5a15ba599878f6c903",
+    "size": 11997
+  },
+  {
+    "file": "reference/consistency.md",
+    "url": "https://developers.cloudflare.com/r2/reference/consistency/index.md",
+    "sha256": "3a2f31973f2adcdb67dc232e430bc392f4ca0a0ebe0800eb3e57bede54a5d2d9",
+    "size": 7146
+  },
+  {
+    "file": "reference/data-location.md",
+    "url": "https://developers.cloudflare.com/r2/reference/data-location/index.md",
+    "sha256": "01bd3ae5c483822bdd19be15ffe6ff9af5176fab630a9670559c80a18fb0fb01",
+    "size": 8159
+  },
+  {
+    "file": "reference/data-security.md",
+    "url": "https://developers.cloudflare.com/r2/reference/data-security/index.md",
+    "sha256": "46cf16e679538013723e80c4d89e3438f9fbcc1cbe6baadfa1df6f0d166ae67e",
+    "size": 3530
+  },
+  {
+    "file": "reference/durability.md",
+    "url": "https://developers.cloudflare.com/r2/reference/durability/index.md",
+    "sha256": "bd54b04100f2d3e13e57162aeb74161b871a6152f4f2fea25d01287612f27898",
+    "size": 3942
+  },
+  {
+    "file": "reference/partners.md",
+    "url": "https://developers.cloudflare.com/r2/reference/partners/index.md",
+    "sha256": "5ee3fb89e35ab526a1f43cadcbb818a9b3e90a895bc33e8da97fcb1c1645282b",
+    "size": 1535
+  },
+  {
+    "file": "reference/partners/snowflake-regions.md",
+    "url": "https://developers.cloudflare.com/r2/reference/partners/snowflake-regions/index.md",
+    "sha256": "15c707d50137ff7f088ddd66658f37790580d94e5e5677fd86df17f7f4da232c",
+    "size": 7879
+  },
+  {
+    "file": "reference/unicode-interoperability.md",
+    "url": "https://developers.cloudflare.com/r2/reference/unicode-interoperability/index.md",
+    "sha256": "d59812a4081c2a029971eafd267992ff1e47acf27c30c52369a7de6f6e102f64",
+    "size": 3125
+  },
+  {
+    "file": "reference/wrangler-commands.md",
+    "url": "https://developers.cloudflare.com/r2/reference/wrangler-commands/index.md",
+    "sha256": "3e52ba993fcb0cac87632652f09784ee5e531811dad519ef3e0e3390e445be0d",
+    "size": 65613
+  },
+  {
+    "file": "tutorials.md",
+    "url": "https://developers.cloudflare.com/r2/tutorials/index.md",
+    "sha256": "c4f66378a1f69b870ea4a238befca10a3918631adb3e2a5268a2613387c41fb2",
+    "size": 2957
+  },
+  {
+    "file": "tutorials/cloudflare-access.md",
+    "url": "https://developers.cloudflare.com/r2/tutorials/cloudflare-access/index.md",
+    "sha256": "f22147e5de605197da1b7404050206e0e49f71d769c2d95378bde8e8822f6189",
+    "size": 7213
+  },
+  {
+    "file": "tutorials/mastodon.md",
+    "url": "https://developers.cloudflare.com/r2/tutorials/mastodon/index.md",
+    "sha256": "2a640cc5381f9a5dab19075fd36489a3dec4754a4f1ba12623c7639282cf4716",
+    "size": 9089
+  },
+  {
+    "file": "tutorials/postman.md",
+    "url": "https://developers.cloudflare.com/r2/tutorials/postman/index.md",
+    "sha256": "e58dc09ada9a3190ef90bad8945489b03448eebff4e0bf9537479f23c88fb897",
+    "size": 6970
+  },
+  {
+    "file": "tutorials/summarize-pdf.md",
+    "url": "https://developers.cloudflare.com/r2/tutorials/summarize-pdf/index.md",
+    "sha256": "8de41c1d240fe572144bf87cbab4588b26477ea8daacfd8bab173e0941b0267b",
+    "size": 18028
+  },
+  {
+    "file": "tutorials/upload-logs-event-notifications.md",
+    "url": "https://developers.cloudflare.com/r2/tutorials/upload-logs-event-notifications/index.md",
+    "sha256": "401984ceaff53c30083fb486465dc981d09d1eca1bc90dbdf37d5fd5f8ec735e",
+    "size": 7855
+  }
+]

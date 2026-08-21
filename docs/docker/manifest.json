@@ -1,0 +1,14 @@
+[
+  {
+    "file": "llms-full.txt",
+    "url": "https://docs.docker.com/llms-full.txt",
+    "sha256": "79ee8fe19db99c89939ce5bfc8023842d68dd22b1bfb134775419065ea4c2af8",
+    "size": 323802
+  },
+  {
+    "file": "llms.txt",
+    "url": "https://docs.docker.com/llms.txt",
+    "sha256": "7e6710cf5b01d09cbc6b019c9c6c94e635091abbed4445f8b8139ed846f9b240",
+    "size": 5710
+  }
+]

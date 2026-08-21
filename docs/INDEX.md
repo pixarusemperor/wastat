@@ -38,15 +38,49 @@ Never fetch documentation from the web at runtime (PRD §40).
 
 ## Cloudflare R2
 
-*(not yet downloaded — see wayfinder map #4)*
+> S3-compatible object storage — buckets, presigned URLs, uploads/downloads, security.
+
+- **Source:** https://developers.cloudflare.com/r2/llms.txt
+- **Snapshot date:** 2026-08-21
+- **Pages captured:** 78 (+ `llms.txt` index)
+- **Per-file hashes:** `docs/cloudflare-r2/manifest.json`
+
+Key pages for this project:
+
+| Topic | Path |
+|---|---|
+| Overview / pricing | `docs/cloudflare-r2/overview.md`, `pricing.md` |
+| Get started (S3 SDKs) | `docs/cloudflare-r2/get-started/s3.md` |
+| S3 API + extensions | `docs/cloudflare-r2/api/s3/api.md`, `extensions.md` |
+| **Presigned URLs** (browser upload/download) | `docs/cloudflare-r2/api/s3/presigned-urls.md` |
+| Temporary credentials | `docs/cloudflare-r2/api/s3/temporary-credentials.md` |
+| CORS configuration | `docs/cloudflare-r2/buckets/cors.md` |
+| Data security / tokens | `docs/cloudflare-r2/reference/data-security.md`, `docs/cloudflare-r2/api/tokens.md` |
+| Object lifecycles | `docs/cloudflare-r2/buckets/object-lifecycles.md` |
 
 ## React Flow
 
-*(not yet downloaded — see wayfinder map #4)*
+> Node-based UI library — workflow canvas, custom nodes/edges, viewport control.
+
+- **Source:** https://reactflow.dev/llms-full.txt
+- **Snapshot date:** 2026-08-21
+- **Raw corpus:** `docs/react-flow/llms-full.txt` (~896 KB, full text of all doc pages)
+- **Page index:** `docs/react-flow/llms.txt`
+- **Per-file hashes:** `docs/react-flow/manifest.json`
+
+Grep `llms-full.txt` first; section headings (`## Learn`, `## API Reference`) delimit pages. Key sections: Building a Flow, Custom Nodes, Custom Edges, The Viewport, Adding Interactivity, Performance.
 
 ## Docker
 
-*(not yet downloaded — see wayfinder map #4)*
+> Images, containers, volumes, compose — deployment target for Coolify.
+
+- **Source:** https://docs.docker.com/llms-full.txt
+- **Snapshot date:** 2026-08-21
+- **Raw corpus:** `docs/docker/llms-full.txt` (~324 KB)
+- **Page index:** `docs/docker/llms.txt`
+- **Per-file hashes:** `docs/docker/manifest.json`
+
+Grep `llms-full.txt` first. Key sections: Docker concepts (containers/images/volumes), Compose, networking.
 
 ## Deployment
 
