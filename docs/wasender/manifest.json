@@ -1,0 +1,596 @@
+[
+  {
+    "title": "Official SDKs – Node.js, Python & Laravel",
+    "category": "Developer SDKs",
+    "url": "https://www.wasenderapi.com/api-docs/developer-sdks/official-sdks-nodejs-python-laravel",
+    "file": "developer-sdks/official-sdks-nodejs-python-laravel.md"
+  },
+  {
+    "title": "Getting Started with WasenderAPI",
+    "category": "Getting Started",
+    "url": "https://www.wasenderapi.com/api-docs/getting-started/getting-started-with-wasenderapi",
+    "file": "getting-started/getting-started-with-wasenderapi.md"
+  },
+  {
+    "title": "Using Our API with Postman",
+    "category": "Getting Started",
+    "url": "https://www.wasenderapi.com/api-docs/getting-started/using-our-api-with-postman",
+    "file": "getting-started/using-our-api-with-postman.md"
+  },
+  {
+    "title": "How To Receive Messages and Media From Wasenderapi",
+    "category": "Getting Started",
+    "url": "https://www.wasenderapi.com/api-docs/getting-started/how-to-receive-messages-and-media-from-wasenderapi",
+    "file": "getting-started/how-to-receive-messages-and-media-from-wasenderapi.md"
+  },
+  {
+    "title": "Model Context Protocol (MCP) Integration",
+    "category": "Getting Started",
+    "url": "https://www.wasenderapi.com/api-docs/getting-started/model-context-protocol-mcp-integration",
+    "file": "getting-started/model-context-protocol-mcp-integration.md"
+  },
+  {
+    "title": "Using Proxies",
+    "category": "Getting Started",
+    "url": "https://www.wasenderapi.com/api-docs/getting-started/using-proxies",
+    "file": "getting-started/using-proxies.md"
+  },
+  {
+    "title": "n8n Integration (Community Node)",
+    "category": "Getting Started",
+    "url": "https://www.wasenderapi.com/api-docs/getting-started/n8n-integration-community-node",
+    "file": "getting-started/n8n-integration-community-node.md"
+  },
+  {
+    "title": "How to Authenticate API Requests Using Bearer Tokens",
+    "category": "Authentication",
+    "url": "https://www.wasenderapi.com/api-docs/authentication/how-to-authenticate-api-requests-using-bearer-tokens",
+    "file": "authentication/how-to-authenticate-api-requests-using-bearer-tokens.md"
+  },
+  {
+    "title": "How to Authenticate API Requests Using Personal Access Token",
+    "category": "Authentication",
+    "url": "https://www.wasenderapi.com/api-docs/authentication/how-to-authenticate-api-requests-using-personal-access-token",
+    "file": "authentication/how-to-authenticate-api-requests-using-personal-access-token.md"
+  },
+  {
+    "title": "Get All WhatsApp Sessions",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/get-all-whatsapp-sessions",
+    "file": "sessions/get-all-whatsapp-sessions.md"
+  },
+  {
+    "title": "Create WhatsApp Session",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/create-whatsapp-session",
+    "file": "sessions/create-whatsapp-session.md"
+  },
+  {
+    "title": "Get WhatsApp Session Details",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/get-whatsapp-session-details",
+    "file": "sessions/get-whatsapp-session-details.md"
+  },
+  {
+    "title": "Update WhatsApp Session",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/update-whatsapp-session",
+    "file": "sessions/update-whatsapp-session.md"
+  },
+  {
+    "title": "Delete WhatsApp Session",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/delete-whatsapp-session",
+    "file": "sessions/delete-whatsapp-session.md"
+  },
+  {
+    "title": "Get WhatsApp Session Status",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/get-whatsapp-session-status",
+    "file": "sessions/get-whatsapp-session-status.md"
+  },
+  {
+    "title": "Connect WhatsApp Session",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/connect-whatsapp-session",
+    "file": "sessions/connect-whatsapp-session.md"
+  },
+  {
+    "title": "Restart WhatsApp Session",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/restart-whatsapp-session",
+    "file": "sessions/restart-whatsapp-session.md"
+  },
+  {
+    "title": "Get Message Logs",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/get-message-logs",
+    "file": "sessions/get-message-logs.md"
+  },
+  {
+    "title": "Get Passkey Token",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/get-whatsapp-session-passkey-token",
+    "file": "sessions/get-whatsapp-session-passkey-token.md"
+  },
+  {
+    "title": "Get WhatsApp Session QR Code",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/get-whatsapp-session-qr-code",
+    "file": "sessions/get-whatsapp-session-qr-code.md"
+  },
+  {
+    "title": "Disconnect WhatsApp Session",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/disconnect-whatsapp-session",
+    "file": "sessions/disconnect-whatsapp-session.md"
+  },
+  {
+    "title": "Get Pending Passkey Request",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/get-pending-passkey-request",
+    "file": "sessions/get-pending-passkey-request.md"
+  },
+  {
+    "title": "Get Session Logs",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/get-session-logs",
+    "file": "sessions/get-session-logs.md"
+  },
+  {
+    "title": "Get Session User Info",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/get-session-user-info",
+    "file": "sessions/get-session-user-info.md"
+  },
+  {
+    "title": "Submit Passkey Response",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/submit-passkey-response",
+    "file": "sessions/submit-passkey-response.md"
+  },
+  {
+    "title": "Check if a contact is on WhatsApp",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/check-if-a-contact-is-on-whatsapp",
+    "file": "sessions/check-if-a-contact-is-on-whatsapp.md"
+  },
+  {
+    "title": "Confirm Passkey Link",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/confirm-passkey-link",
+    "file": "sessions/confirm-passkey-link.md"
+  },
+  {
+    "title": "Fetch Username",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/fetch-username",
+    "file": "sessions/fetch-username.md"
+  },
+  {
+    "title": "Regenerate API Key",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/regenerate-api-key",
+    "file": "sessions/regenerate-api-key.md"
+  },
+  {
+    "title": "Send Presence Update",
+    "category": "Sessions",
+    "url": "https://www.wasenderapi.com/api-docs/sessions/send-presence-update",
+    "file": "sessions/send-presence-update.md"
+  },
+  {
+    "title": "Block Contact",
+    "category": "Contacts",
+    "url": "https://www.wasenderapi.com/api-docs/contacts/block-contact",
+    "file": "contacts/block-contact.md"
+  },
+  {
+    "title": "Get All Contacts",
+    "category": "Contacts",
+    "url": "https://www.wasenderapi.com/api-docs/contacts/get-all-contacts",
+    "file": "contacts/get-all-contacts.md"
+  },
+  {
+    "title": "Get Contact Info",
+    "category": "Contacts",
+    "url": "https://www.wasenderapi.com/api-docs/contacts/get-contact-info",
+    "file": "contacts/get-contact-info.md"
+  },
+  {
+    "title": "Get Contact Profile Picture",
+    "category": "Contacts",
+    "url": "https://www.wasenderapi.com/api-docs/contacts/get-contact-profile-picture",
+    "file": "contacts/get-contact-profile-picture.md"
+  },
+  {
+    "title": "Unblock Contact",
+    "category": "Contacts",
+    "url": "https://www.wasenderapi.com/api-docs/contacts/unblock-contact",
+    "file": "contacts/unblock-contact.md"
+  },
+  {
+    "title": "Create or Update Contact",
+    "category": "Contacts",
+    "url": "https://www.wasenderapi.com/api-docs/contacts/create-or-update-contact",
+    "file": "contacts/create-or-update-contact.md"
+  },
+  {
+    "title": "Get LID from Phone Number",
+    "category": "Contacts",
+    "url": "https://www.wasenderapi.com/api-docs/contacts/get-lid-from-phone-number",
+    "file": "contacts/get-lid-from-phone-number.md"
+  },
+  {
+    "title": "Get Phone Number from LID",
+    "category": "Contacts",
+    "url": "https://www.wasenderapi.com/api-docs/contacts/get-phone-number-from-lid",
+    "file": "contacts/get-phone-number-from-lid.md"
+  },
+  {
+    "title": "Decrypt Media File",
+    "category": "Messages",
+    "url": "https://www.wasenderapi.com/api-docs/messages/decrypt-media-file",
+    "file": "messages/decrypt-media-file.md"
+  },
+  {
+    "title": "Upload Media File",
+    "category": "Messages",
+    "url": "https://www.wasenderapi.com/api-docs/messages/upload-media-file",
+    "file": "messages/upload-media-file.md"
+  },
+  {
+    "title": "Send Text Message",
+    "category": "Messages",
+    "url": "https://www.wasenderapi.com/api-docs/messages/send-text-message",
+    "file": "messages/send-text-message.md"
+  },
+  {
+    "title": "Send Image Message",
+    "category": "Messages",
+    "url": "https://www.wasenderapi.com/api-docs/messages/send-image-message",
+    "file": "messages/send-image-message.md"
+  },
+  {
+    "title": "Send Video Message",
+    "category": "Messages",
+    "url": "https://www.wasenderapi.com/api-docs/messages/send-video-message",
+    "file": "messages/send-video-message.md"
+  },
+  {
+    "title": "Send Document Message",
+    "category": "Messages",
+    "url": "https://www.wasenderapi.com/api-docs/messages/send-document-message",
+    "file": "messages/send-document-message.md"
+  },
+  {
+    "title": "Send Audio Message",
+    "category": "Messages",
+    "url": "https://www.wasenderapi.com/api-docs/messages/send-audio-message",
+    "file": "messages/send-audio-message.md"
+  },
+  {
+    "title": "Send Sticker Message",
+    "category": "Messages",
+    "url": "https://www.wasenderapi.com/api-docs/messages/send-sticker-message",
+    "file": "messages/send-sticker-message.md"
+  },
+  {
+    "title": "Send Contact Card",
+    "category": "Messages",
+    "url": "https://www.wasenderapi.com/api-docs/messages/send-contact-card",
+    "file": "messages/send-contact-card.md"
+  },
+  {
+    "title": "Resend Failed Message",
+    "category": "Messages",
+    "url": "https://www.wasenderapi.com/api-docs/messages/resend-failed-message",
+    "file": "messages/resend-failed-message.md"
+  },
+  {
+    "title": "Send Location",
+    "category": "Messages",
+    "url": "https://www.wasenderapi.com/api-docs/messages/send-location",
+    "file": "messages/send-location.md"
+  },
+  {
+    "title": "Send Poll Message",
+    "category": "Messages",
+    "url": "https://www.wasenderapi.com/api-docs/messages/send-poll-message",
+    "file": "messages/send-poll-message.md"
+  },
+  {
+    "title": "Send Quoted Message",
+    "category": "Messages",
+    "url": "https://www.wasenderapi.com/api-docs/messages/send-quoted-message",
+    "file": "messages/send-quoted-message.md"
+  },
+  {
+    "title": "Edit a Message",
+    "category": "Messages",
+    "url": "https://www.wasenderapi.com/api-docs/messages/edit-a-message",
+    "file": "messages/edit-a-message.md"
+  },
+  {
+    "title": "Get Message Info",
+    "category": "Messages",
+    "url": "https://www.wasenderapi.com/api-docs/messages/get-message-info",
+    "file": "messages/get-message-info.md"
+  },
+  {
+    "title": "Delete a Message",
+    "category": "Messages",
+    "url": "https://www.wasenderapi.com/api-docs/messages/delete-a-message",
+    "file": "messages/delete-a-message.md"
+  },
+  {
+    "title": "Mark Message as Read",
+    "category": "Messages",
+    "url": "https://www.wasenderapi.com/api-docs/messages/mark-message-as-read",
+    "file": "messages/mark-message-as-read.md"
+  },
+  {
+    "title": "Send View Once Message",
+    "category": "Messages",
+    "url": "https://www.wasenderapi.com/api-docs/messages/send-view-once-message",
+    "file": "messages/send-view-once-message.md"
+  },
+  {
+    "title": "Create a New Group",
+    "category": "Groups",
+    "url": "https://www.wasenderapi.com/api-docs/groups/create-a-new-group",
+    "file": "groups/create-a-new-group.md"
+  },
+  {
+    "title": "Get All Groups",
+    "category": "Groups",
+    "url": "https://www.wasenderapi.com/api-docs/groups/get-all-groups",
+    "file": "groups/get-all-groups.md"
+  },
+  {
+    "title": "Get Group Metadata",
+    "category": "Groups",
+    "url": "https://www.wasenderapi.com/api-docs/groups/get-group-metadata",
+    "file": "groups/get-group-metadata.md"
+  },
+  {
+    "title": "Send Group Message",
+    "category": "Groups",
+    "url": "https://www.wasenderapi.com/api-docs/groups/send-group-message",
+    "file": "groups/send-group-message.md"
+  },
+  {
+    "title": "Update Group Participants",
+    "category": "Groups",
+    "url": "https://www.wasenderapi.com/api-docs/groups/update-group-participants",
+    "file": "groups/update-group-participants.md"
+  },
+  {
+    "title": "Get Group Participants",
+    "category": "Groups",
+    "url": "https://www.wasenderapi.com/api-docs/groups/get-group-participants",
+    "file": "groups/get-group-participants.md"
+  },
+  {
+    "title": "Send Message with Mentions",
+    "category": "Groups",
+    "url": "https://www.wasenderapi.com/api-docs/groups/send-message-with-mentions",
+    "file": "groups/send-message-with-mentions.md"
+  },
+  {
+    "title": "Add Group Participants",
+    "category": "Groups",
+    "url": "https://www.wasenderapi.com/api-docs/groups/add-group-participants",
+    "file": "groups/add-group-participants.md"
+  },
+  {
+    "title": "Get Group Profile Picture",
+    "category": "Groups",
+    "url": "https://www.wasenderapi.com/api-docs/groups/get-group-profile-picture",
+    "file": "groups/get-group-profile-picture.md"
+  },
+  {
+    "title": "Remove Group Participants",
+    "category": "Groups",
+    "url": "https://www.wasenderapi.com/api-docs/groups/remove-group-participants",
+    "file": "groups/remove-group-participants.md"
+  },
+  {
+    "title": "Update Group Settings",
+    "category": "Groups",
+    "url": "https://www.wasenderapi.com/api-docs/groups/update-group-settings",
+    "file": "groups/update-group-settings.md"
+  },
+  {
+    "title": "Get Group Invite Link",
+    "category": "Groups",
+    "url": "https://www.wasenderapi.com/api-docs/groups/get-group-invite-link",
+    "file": "groups/get-group-invite-link.md"
+  },
+  {
+    "title": "Get Group Invite Info",
+    "category": "Groups",
+    "url": "https://www.wasenderapi.com/api-docs/groups/get-group-invite-info",
+    "file": "groups/get-group-invite-info.md"
+  },
+  {
+    "title": "Accept Group Invite",
+    "category": "Groups",
+    "url": "https://www.wasenderapi.com/api-docs/groups/accept-group-invite",
+    "file": "groups/accept-group-invite.md"
+  },
+  {
+    "title": "Leave Group",
+    "category": "Groups",
+    "url": "https://www.wasenderapi.com/api-docs/groups/leave-group",
+    "file": "groups/leave-group.md"
+  },
+  {
+    "title": "Send Channel Message",
+    "category": "Channels (Communities)",
+    "url": "https://www.wasenderapi.com/api-docs/channels-communities/send-channel-message",
+    "file": "channels-communities/send-channel-message.md"
+  },
+  {
+    "title": "Webhook Setup",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-setup",
+    "file": "webhooks/webhook-setup.md"
+  },
+  {
+    "title": "Webhook: Contact Update",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-contact-update",
+    "file": "webhooks/webhook-contact-update.md"
+  },
+  {
+    "title": "Webhook: Contact Upsert",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-contact-upsert",
+    "file": "webhooks/webhook-contact-upsert.md"
+  },
+  {
+    "title": "Webhook: Group Participants Update",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-group-participants-update",
+    "file": "webhooks/webhook-group-participants-update.md"
+  },
+  {
+    "title": "Webhook: Group Update",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-group-update",
+    "file": "webhooks/webhook-group-update.md"
+  },
+  {
+    "title": "Webhook: Chat Update",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-chat-update",
+    "file": "webhooks/webhook-chat-update.md"
+  },
+  {
+    "title": "Webhook: Group Upsert",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-group-upsert",
+    "file": "webhooks/webhook-group-upsert.md"
+  },
+  {
+    "title": "Webhook: Message Sent",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-message-sent",
+    "file": "webhooks/webhook-message-sent.md"
+  },
+  {
+    "title": "Webhook: Chat Delete",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-chat-delete",
+    "file": "webhooks/webhook-chat-delete.md"
+  },
+  {
+    "title": "Webhook: Chat Upsert",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-chat-upsert",
+    "file": "webhooks/webhook-chat-upsert.md"
+  },
+  {
+    "title": "Webhook: Session Status",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-session-status",
+    "file": "webhooks/webhook-session-status.md"
+  },
+  {
+    "title": "Webhook: Passkey Updated",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-passkey-updated",
+    "file": "webhooks/webhook-passkey-updated.md"
+  },
+  {
+    "title": "Webhook: QR Code Updated",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-qrcode-updated",
+    "file": "webhooks/webhook-qrcode-updated.md"
+  },
+  {
+    "title": "Webhook: Message Received",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-message-received",
+    "file": "webhooks/webhook-message-received.md"
+  },
+  {
+    "title": "Webhook: Message Upsert",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-message-upsert",
+    "file": "webhooks/webhook-message-upsert.md"
+  },
+  {
+    "title": "Webhook: Group Message Received",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-group-message-received",
+    "file": "webhooks/webhook-group-message-received.md"
+  },
+  {
+    "title": "Webhook: Message Status Update",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-message-update",
+    "file": "webhooks/webhook-message-update.md"
+  },
+  {
+    "title": "Webhook: Message Deleted",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-message-deleted",
+    "file": "webhooks/webhook-message-deleted.md"
+  },
+  {
+    "title": "Webhook: Newsletter Message Received",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-newsletter-message-received",
+    "file": "webhooks/webhook-newsletter-message-received.md"
+  },
+  {
+    "title": "Webhook: Message Receipt Update",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-message-receipt-update",
+    "file": "webhooks/webhook-message-receipt-update.md"
+  },
+  {
+    "title": "Webhook: Personal Message Received",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-personal-message-received",
+    "file": "webhooks/webhook-personal-message-received.md"
+  },
+  {
+    "title": "Webhook: Call Received",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-call-received",
+    "file": "webhooks/webhook-call-received.md"
+  },
+  {
+    "title": "Webhook: Message Reaction",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-message-reaction",
+    "file": "webhooks/webhook-message-reaction.md"
+  },
+  {
+    "title": "Webhook: Poll Results",
+    "category": "Webhooks",
+    "url": "https://www.wasenderapi.com/api-docs/webhooks/webhook-poll-results",
+    "file": "webhooks/webhook-poll-results.md"
+  },
+  {
+    "title": "Response Headers",
+    "category": "Responses & Errors",
+    "url": "https://www.wasenderapi.com/api-docs/responses-errors/response-headers",
+    "file": "responses-errors/response-headers.md"
+  },
+  {
+    "title": "Error Responses",
+    "category": "Responses & Errors",
+    "url": "https://www.wasenderapi.com/api-docs/responses-errors/error-responses",
+    "file": "responses-errors/error-responses.md"
+  },
+  {
+    "title": "Understanding Rate Limits",
+    "category": "Rate Limits",
+    "url": "https://www.wasenderapi.com/api-docs/rate-limits/understanding-rate-limits",
+    "file": "rate-limits/understanding-rate-limits.md"
+  }
+]

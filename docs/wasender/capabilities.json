@@ -1,0 +1,501 @@
+{
+  "provider": "wasender",
+  "version": "snapshot",
+  "downloadedAt": "2026-08-21T13:43:12.119Z",
+  "sha256": "a8468cfe9c6049f79f90afdbf8c42384a1f14b244c46cc9afdb307f45fbf59fb",
+  "sourceUrl": "https://www.wasenderapi.com/llms.txt",
+  "pageCount": 99,
+
+  "authentication": {
+    "modes": [
+      {
+        "name": "Bearer Token (Session API Key)",
+        "description": "Generated per WhatsApp session after connection. Used in Authorization: Bearer <key> header. Scoped to one session.",
+        "usage": "Session-specific operations (send messages, manage contacts for that session only)."
+      },
+      {
+        "name": "Personal Access Token (PAT)",
+        "description": "Generated from account settings. Used in Authorization: Bearer <token> header. Account-wide scope.",
+        "usage": "Session management across all sessions (create, list, delete sessions)."
+      }
+    ]
+  },
+
+  "rateLimits": {
+    "trial": {
+      "messagesPerMinute": 1,
+      "description": "1 message every 1 minute during free trial."
+    },
+    "accountProtection": {
+      "messagesPer5Seconds": 1,
+      "description": "When account protection is enabled, 1 message per 5 seconds."
+    },
+    "paid": {
+      "description": "Higher limits on paid plans. Limits vary by endpoint and plan tier."
+    },
+    "responseHeaders": ["X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "X-RateLimit-Daily-Limit", "X-RateLimit-Daily-Remaining", "X-RateLimit-Daily-Reset"],
+    "appSafetyPolicy": {
+      "description": "Application-level safety policy (PRD §24): ≥5 seconds between outbound sends per session. Independent of Wasender's own rate limits.",
+      "minimumIntervalSeconds": 5,
+      "scope": "per-session"
+    }
+  },
+
+  "sessions": {
+    "endpoints": [
+      { "name": "Get All WhatsApp Sessions", "method": "GET", "path": "/api/whatsapp-sessions", "description": "List all sessions for the authenticated account." },
+      { "name": "Create WhatsApp Session", "method": "POST", "path": "/api/whatsapp-sessions", "description": "Create a new WhatsApp session." },
+      { "name": "Get WhatsApp Session Details", "method": "GET", "path": "/api/whatsapp-sessions/{whatsappSession}", "description": "Get details for one session." },
+      { "name": "Update WhatsApp Session", "method": "PUT", "path": "/api/whatsapp-sessions/{whatsappSession}", "description": "Update session settings; syncs webhook config if connected." },
+      { "name": "Delete WhatsApp Session", "method": "DELETE", "path": "/api/whatsapp-sessions/{whatsappSession}", "description": "Delete a session; disconnects first if connected." },
+      { "name": "Get WhatsApp Session Status", "method": "GET", "path": "/api/status", "description": "Current status including QR and Passkey linking states." },
+      { "name": "Connect WhatsApp Session", "method": "POST", "path": "/api/whatsapp-sessions/{whatsappSession}/connect", "description": "Initiate connection via QR (default) or Passkey." },
+      { "name": "Restart WhatsApp Session", "method": "POST", "path": "/api/whatsapp-sessions/{whatsappSession}/restart", "description": "Restart a connected session." },
+      { "name": "Get Message Logs", "method": "GET", "path": "/api/whatsapp-sessions/{whatsappSession}/message-logs", "description": "Paginated message log for a session." },
+      { "name": "Get Passkey Token", "method": "GET", "path": "/api/whatsapp-sessions/{whatsappSession}/passkey-token", "description": "Temporary Passkey token for Device Link Helper." },
+      { "name": "Get WhatsApp Session QR Code", "method": "GET", "path": "/api/whatsapp-sessions/{whatsappSession}/qrcode", "description": "QR code for connecting the session." },
+      { "name": "Disconnect WhatsApp Session", "method": "POST", "path": "/api/whatsapp-sessions/{whatsappSession}/disconnect", "description": "Disconnect an active session." },
+      { "name": "Get Pending Passkey Request", "method": "GET", "path": "/api/passkey/pending", "description": "WebAuthn publicKey options for Passkey linking. Advanced." },
+      { "name": "Get Session Logs", "method": "GET", "path": "/api/whatsapp-sessions/{whatsappSession}/session-logs", "description": "Paginated session activity logs." },
+      { "name": "Get Session User Info", "method": "GET", "path": "/api/user", "description": "WhatsApp user info for the session." },
+      { "name": "Submit Passkey Response", "method": "POST", "path": "/api/passkey/response", "description": "Submit WebAuthn credential response. Advanced." },
+      { "name": "Check if a contact is on WhatsApp", "method": "GET", "path": "/api/on-whatsapp/{contact_identifier}", "description": "Verify if a phone/JID/username is registered." },
+      { "name": "Confirm Passkey Link", "method": "POST", "path": "/api/passkey/confirm", "description": "Confirm Passkey linking request. Advanced." },
+      { "name": "Fetch Username", "method": "GET", "path": "/api/fetch-username/{contact_identifier}", "description": "Fetch WhatsApp username metadata." },
+      { "name": "Regenerate API Key", "method": "POST", "path": "/api/whatsapp-sessions/{whatsappSession}/regenerate-key", "description": "Regenerate session API key." },
+      { "name": "Send Presence Update", "method": "POST", "path": "/api/send-presence-update", "description": "Send typing/recording presence to a JID." }
+    ]
+  },
+
+  "contacts": {
+    "endpoints": [
+      { "name": "Get All Contacts", "method": "GET", "path": "/api/contacts", "description": "List synced contacts for the session." },
+      { "name": "Get Contact Info", "method": "GET", "path": "/api/contacts/{contactPhoneNumber}", "description": "Detailed info for one contact." },
+      { "name": "Get Contact Profile Picture", "method": "GET", "path": "/api/contacts/{contactPhoneNumber}/picture", "description": "Profile picture URL." },
+      { "name": "Block Contact", "method": "POST", "path": "/api/contacts/{contactPhoneNumber}/block", "description": "Block a contact." },
+      { "name": "Unblock Contact", "method": "POST", "path": "/api/contacts/{contactPhoneNumber}/unblock", "description": "Unblock a contact." },
+      { "name": "Create or Update Contact", "method": "PUT", "path": "/api/contacts", "description": "Upsert a contact in the session address book." },
+      { "name": "Get LID from Phone Number", "method": "GET", "path": "/api/lid-from-pn/{pn}", "description": "Get Link ID (LID) from phone number." },
+      { "name": "Get Phone Number from LID", "method": "GET", "path": "/api/pn-from-lid/{lid}", "description": "Get phone number from Link ID." }
+    ]
+  },
+
+  "actions": [
+    {
+      "name": "Send Text Message",
+      "method": "POST",
+      "path": "/api/send-message",
+      "parameters": {
+        "to": { "type": "string", "required": true, "description": "Recipient phone (E.164), WhatsApp JID, username handle, Group JID, or Channel JID." },
+        "text": { "type": "string", "required": true, "description": "Text content of the message." }
+      }
+    },
+    {
+      "name": "Send Image Message",
+      "method": "POST",
+      "path": "/api/send-message",
+      "parameters": {
+        "to": { "type": "string", "required": true },
+        "imageUrl": { "type": "string", "required": true, "description": "Publicly accessible URL of the image." },
+        "text": { "type": "string", "required": false, "description": "Optional caption text." }
+      }
+    },
+    {
+      "name": "Send Audio Message",
+      "method": "POST",
+      "path": "/api/send-message",
+      "parameters": {
+        "to": { "type": "string", "required": true },
+        "audioUrl": { "type": "string", "required": true, "description": "Publicly accessible URL of the audio file." },
+        "text": { "type": "string", "required": false }
+      }
+    },
+    {
+      "name": "Send Video Message",
+      "method": "POST",
+      "path": "/api/send-message",
+      "parameters": {
+        "to": { "type": "string", "required": true },
+        "videoUrl": { "type": "string", "required": true, "description": "Publicly accessible URL of the video." },
+        "text": { "type": "string", "required": false, "description": "Optional caption text." }
+      }
+    },
+    {
+      "name": "Send Document Message",
+      "method": "POST",
+      "path": "/api/send-message",
+      "parameters": {
+        "to": { "type": "string", "required": true },
+        "documentUrl": { "type": "string", "required": true, "description": "Publicly accessible URL of the document." },
+        "fileName": { "type": "string", "required": false, "description": "Display filename for the document." },
+        "text": { "type": "string", "required": false, "description": "Optional caption text." }
+      }
+    },
+    {
+      "name": "Send Sticker Message",
+      "method": "POST",
+      "path": "/api/send-message",
+      "parameters": {
+        "to": { "type": "string", "required": true },
+        "stickerUrl": { "type": "string", "required": true, "description": "URL of the sticker (.webp format)." },
+        "text": { "type": "string", "required": false }
+      }
+    },
+    {
+      "name": "Send Contact Card",
+      "method": "POST",
+      "path": "/api/send-message",
+      "parameters": {
+        "to": { "type": "string", "required": true },
+        "contact": { "type": "object", "required": true, "description": "Contact card object: { name, phone, ... }." }
+      }
+    },
+    {
+      "name": "Send Location",
+      "method": "POST",
+      "path": "/api/send-message",
+      "parameters": {
+        "to": { "type": "string", "required": true },
+        "location": { "type": "object", "required": true, "description": "{ latitude, longitude, name?, address? }." },
+        "text": { "type": "string", "required": false }
+      }
+    },
+    {
+      "name": "Send Poll Message",
+      "method": "POST",
+      "path": "/api/send-message",
+      "parameters": {
+        "to": { "type": "string", "required": true },
+        "poll": { "type": "object", "required": true, "description": "{ question, options[], multiSelect? } (options: min 2, max 12)." }
+      }
+    },
+    {
+      "name": "Send Quoted Message",
+      "method": "POST",
+      "path": "/api/send-message",
+      "parameters": {
+        "to": { "type": "string", "required": true },
+        "text": { "type": "string", "required": true },
+        "quoted": { "type": "object", "required": true, "description": "Message key object of the message to quote/reply to." }
+      }
+    },
+    {
+      "name": "Send View Once Message",
+      "method": "POST",
+      "path": "/api/send-message",
+      "parameters": {
+        "to": { "type": "string", "required": true },
+        "viewOnce": { "type": "boolean", "required": true },
+        "mediaUrl": { "type": "string", "required": true, "description": "Image, video, or audio URL (viewed once)." }
+      }
+    },
+    {
+      "name": "Send Group Message",
+      "method": "POST",
+      "path": "/api/send-message",
+      "parameters": {
+        "to": { "type": "string", "required": true, "description": "Group JID." },
+        "text": { "type": "string", "required": true }
+      }
+    },
+    {
+      "name": "Send Message with Mentions",
+      "method": "POST",
+      "path": "/api/send-message",
+      "parameters": {
+        "to": { "type": "string", "required": true, "description": "Group JID." },
+        "text": { "type": "string", "required": true },
+        "mentions": { "type": "array", "required": true, "description": "Array of participant JIDs to mention." }
+      }
+    },
+    {
+      "name": "Send Channel Message",
+      "method": "POST",
+      "path": "/api/send-message",
+      "parameters": {
+        "to": { "type": "string", "required": true, "description": "Channel JID." },
+        "text": { "type": "string", "required": true }
+      }
+    },
+    {
+      "name": "Mark Message as Read",
+      "method": "POST",
+      "path": "/api/messages/read",
+      "parameters": {
+        "key": { "type": "object", "required": true, "description": "Exact message key object from the webhook payload (triggers blue ticks)." }
+      }
+    },
+    {
+      "name": "Edit a Message",
+      "method": "PUT",
+      "path": "/api/messages/{msgId}",
+      "parameters": {
+        "msgId": { "type": "integer", "required": true },
+        "text": { "type": "string", "required": true, "description": "New text content (only possible for a short period after sending)." }
+      },
+      "note": "Time-limited: only possible shortly after the message was sent."
+    },
+    {
+      "name": "Delete a Message",
+      "method": "DELETE",
+      "path": "/api/messages/{msgId}",
+      "parameters": {
+        "msgId": { "type": "integer", "required": true }
+      },
+      "note": "Time-limited: only possible shortly after the message was sent."
+    },
+    {
+      "name": "Get Message Info",
+      "method": "GET",
+      "path": "/api/messages/{msgId}/info",
+      "parameters": {
+        "msgId": { "type": "integer", "required": true }
+      }
+    },
+    {
+      "name": "Resend Failed Message",
+      "method": "POST",
+      "path": "/api/messages/{message}/resend",
+      "parameters": {
+        "message": { "type": "integer", "required": true, "description": "ID of the failed message from the logs." }
+      }
+    },
+    {
+      "name": "Upload Media File",
+      "method": "POST",
+      "path": "/api/upload",
+      "parameters": {
+        "file": { "type": "binary/base64", "required": true, "description": "Raw binary or Base64-encoded file upload." }
+      },
+      "note": "Returns a URL usable in send-message media parameters. Use as intermediate step before sending media."
+    },
+    {
+      "name": "Decrypt Media File",
+      "method": "POST",
+      "path": "/api/decrypt-media",
+      "parameters": {
+        "mediaKey": { "type": "string", "required": true, "description": "Encryption key from the incoming message webhook." },
+        "url": { "type": "string", "required": true, "description": "Encrypted media URL from the incoming message webhook." }
+      },
+      "note": "Returns a publicUrl valid for 1 hour. Use to download received media files from incoming webhook messages."
+    }
+  ],
+
+  "groups": {
+    "endpoints": [
+      { "name": "Create a New Group", "method": "POST", "path": "/api/groups", "description": "Create a WhatsApp group with name and participants." },
+      { "name": "Get All Groups", "method": "GET", "path": "/api/groups", "description": "List groups the session is a member of." },
+      { "name": "Get Group Metadata", "method": "GET", "path": "/api/groups/{groupJid}/metadata", "description": "Subject, description, creation date, owner." },
+      { "name": "Get Group Participants", "method": "GET", "path": "/api/groups/{groupJid}/participants", "description": "List participants in a group." },
+      { "name": "Add Group Participants", "method": "POST", "path": "/api/groups/{groupJid}/participants/add", "description": "Add participants (admin required)." },
+      { "name": "Remove Group Participants", "method": "POST", "path": "/api/groups/{groupJid}/participants/remove", "description": "Remove participants (admin required)." },
+      { "name": "Update Group Participants", "method": "PUT", "path": "/api/groups/{groupId}/participants/update", "description": "Promote/demote participants." },
+      { "name": "Update Group Settings", "method": "PUT", "path": "/api/groups/{groupJid}/settings", "description": "Subject, description, announce mode, restrict mode (admin)." },
+      { "name": "Get Group Profile Picture", "method": "GET", "path": "/api/groups/{groupJid}/picture", "description": "Group profile picture URL." },
+      { "name": "Get Group Invite Link", "method": "GET", "path": "/api/groups/{groupJid}/invite-link", "description": "Invite link for a group." },
+      { "name": "Get Group Invite Info", "method": "GET", "path": "/api/groups/invite/{inviteCode}", "description": "Metadata from an invite code." },
+      { "name": "Accept Group Invite", "method": "POST", "path": "/api/groups/invite/accept", "description": "Join a group via invite code." },
+      { "name": "Leave Group", "method": "POST", "path": "/api/groups/{groupId}/leave", "description": "Leave a group." }
+    ]
+  },
+
+  "webhookEvents": [
+    {
+      "name": "Message Received",
+      "event": "messages.received",
+      "suitability": "suitable-as-trigger",
+      "description": "Incoming messages (private + group). Fires for every new message received.",
+      "payloadKeys": ["key.id", "key.remoteJid", "key.fromMe", "messageBody", "pushName", "messageType"],
+      "doc": "docs/wasender/webhooks/webhook-message-received.md"
+    },
+    {
+      "name": "Message Upsert",
+      "event": "messages.upsert",
+      "suitability": "suitable-as-trigger",
+      "description": "ALL messages (both incoming and outgoing) in the session. Broader than messages.received.",
+      "doc": "docs/wasender/webhooks/webhook-message-upsert.md"
+    },
+    {
+      "name": "Personal Message Received",
+      "event": "messages-personal.received",
+      "suitability": "suitable-as-trigger",
+      "description": "New message in a direct one-to-one chat. Distinct from groups/newsletters.",
+      "doc": "docs/wasender/webhooks/webhook-personal-message-received.md"
+    },
+    {
+      "name": "Group Message Received",
+      "event": "messages-group.received",
+      "suitability": "suitable-as-trigger",
+      "description": "New message in a group. Includes group JID and sender participant JID.",
+      "doc": "docs/wasender/webhooks/webhook-group-message-received.md"
+    },
+    {
+      "name": "Newsletter Message Received",
+      "event": "messages-newsletter.received",
+      "suitability": "suitable-as-trigger",
+      "description": "New message published in a newsletter/channel the session subscribes to.",
+      "doc": "docs/wasender/webhooks/webhook-newsletter-message-received.md"
+    },
+    {
+      "name": "Message Sent",
+      "event": "message.sent",
+      "suitability": "suitable-as-trigger",
+      "description": "Outbound message successfully sent. Can trigger post-send followup workflows.",
+      "doc": "docs/wasender/webhooks/webhook-message-sent.md"
+    },
+    {
+      "name": "Message Reaction",
+      "event": "messages.reaction",
+      "suitability": "suitable-as-trigger",
+      "description": "Someone reacted to a message with an emoji.",
+      "doc": "docs/wasender/webhooks/webhook-message-reaction.md"
+    },
+    {
+      "name": "Poll Results",
+      "event": "poll.results",
+      "suitability": "suitable-as-trigger",
+      "description": "A poll vote was cast by a user.",
+      "doc": "docs/wasender/webhooks/webhook-poll-results.md"
+    },
+    {
+      "name": "Contact Upsert",
+      "event": "contacts.upsert",
+      "suitability": "suitable-as-trigger",
+      "description": "New contact added or existing contact updated in the session's contact list.",
+      "doc": "docs/wasender/webhooks/webhook-contact-upsert.md"
+    },
+    {
+      "name": "Contact Update",
+      "event": "contacts.update",
+      "suitability": "suitable-as-trigger",
+      "description": "Contact profile picture or status changed.",
+      "doc": "docs/wasender/webhooks/webhook-contact-update.md"
+    },
+    {
+      "name": "Group Participants Update",
+      "event": "group-participants.update",
+      "suitability": "suitable-as-trigger",
+      "description": "Participants added, removed, promoted, or demoted in a group. Includes action field.",
+      "doc": "docs/wasender/webhooks/webhook-group-participants-update.md"
+    },
+    {
+      "name": "Group Upsert",
+      "event": "groups.upsert",
+      "suitability": "suitable-as-trigger",
+      "description": "Session joined a new group, or existing group metadata (subject/description) updated.",
+      "doc": "docs/wasender/webhooks/webhook-group-upsert.md"
+    },
+    {
+      "name": "Group Update",
+      "event": "groups.update",
+      "suitability": "suitable-as-trigger",
+      "description": "Group settings changed (e.g., announce mode, restrict mode) by an admin.",
+      "doc": "docs/wasender/webhooks/webhook-group-update.md"
+    },
+    {
+      "name": "Session Status",
+      "event": "session.status",
+      "suitability": "suitable-as-trigger",
+      "description": "Session connection state changed (connecting, connected, disconnected, need_scan, etc.).",
+      "doc": "docs/wasender/webhooks/webhook-session-status.md"
+    },
+    {
+      "name": "Call Received",
+      "event": "call",
+      "suitability": "suitable-as-trigger",
+      "description": "Incoming voice or video call. Includes call ID, caller JID, and video flag.",
+      "doc": "docs/wasender/webhooks/webhook-call-received.md"
+    },
+    {
+      "name": "Message Status Update",
+      "event": "messages.update",
+      "suitability": "not-suitable",
+      "reason": "Raw status-update events (delivered, read, played). Too noisy and low-signal as a workflow trigger.",
+      "doc": "docs/wasender/webhooks/webhook-message-update.md"
+    },
+    {
+      "name": "Message Deleted",
+      "event": "messages.delete",
+      "suitability": "not-suitable",
+      "reason": "Deletion event — the message is already gone, so there is nothing actionable to trigger on.",
+      "doc": "docs/wasender/webhooks/webhook-message-deleted.md"
+    },
+    {
+      "name": "Chat Delete",
+      "event": "chats.delete",
+      "suitability": "not-suitable",
+      "reason": "Low-level chat deletion event, not user-initiated conversation content.",
+      "doc": "docs/wasender/webhooks/webhook-chat-delete.md"
+    },
+    {
+      "name": "Chat Update",
+      "event": "chats.update",
+      "suitability": "not-suitable",
+      "reason": "Unread count, mute status — too granular for workflow triggering.",
+      "doc": "docs/wasender/webhooks/webhook-chat-update.md"
+    },
+    {
+      "name": "Chat Upsert",
+      "event": "chats.upsert",
+      "suitability": "not-suitable",
+      "reason": "Chat created/updated — system-level, not user-conversation-initiated.",
+      "doc": "docs/wasender/webhooks/webhook-chat-upsert.md"
+    },
+    {
+      "name": "Message Receipt Update",
+      "event": "message-receipt.update",
+      "suitability": "not-suitable",
+      "reason": "Internal receipt-level status changes (group receipt tracking). Too noisy.",
+      "doc": "docs/wasender/webhooks/webhook-message-receipt-update.md"
+    },
+    {
+      "name": "Passkey Updated",
+      "event": "passkey.updated",
+      "suitability": "not-suitable",
+      "reason": "Passkey auth flow — not message-driven or workflow-relevant.",
+      "doc": "docs/wasender/webhooks/webhook-passkey-updated.md"
+    },
+    {
+      "name": "QR Code Updated",
+      "event": "qrcode.updated",
+      "suitability": "not-suitable",
+      "reason": "QR code linking flow — authentication-side event, not conversation-driven.",
+      "doc": "docs/wasender/webhooks/webhook-qrcode-updated.md"
+    }
+  ],
+
+  "webhookSetup": {
+    "url": "POST /your-webhook-url",
+    "headerAuth": "X-Authorization header with your API key",
+    "events": {
+      "configurable": true,
+      "enablePerEvent": true,
+      "note": "Enable specific event types via the Wasender dashboard or session update API."
+    },
+    "doc": "docs/wasender/webhooks/webhook-setup.md"
+  },
+
+  "messageTypes": {
+    "text": { "field": "text", "description": "Plain text message." },
+    "image": { "field": "imageUrl", "description": "JPEG, PNG via publicly accessible URL." },
+    "audio": { "field": "audioUrl", "description": "Audio file via publicly accessible URL." },
+    "video": { "field": "videoUrl", "description": "Video file via publicly accessible URL." },
+    "document": { "field": "documentUrl", "description": "Any document via publicly accessible URL; optional fileName." },
+    "sticker": { "field": "stickerUrl", "description": "Sticker via URL (must be .webp format)." },
+    "contact": { "field": "contact", "description": "Contact card object: { name, phone, ... }." },
+    "location": { "field": "location", "description": "Location object: { latitude, longitude, name?, address? }." },
+    "poll": { "field": "poll", "description": "Poll: { question, options[], multiSelect? }. Options: min 2, max 12." },
+    "quoted": { "field": "quoted", "description": "Quoted/reply message: message key object of the original message." },
+    "viewOnce": { "field": "viewOnce", "description": "View-once image/video/audio. Requires viewOnce: true + media URL." },
+    "mentions": { "field": "mentions", "description": "Group message with @mentions: array of participant JIDs." }
+  },
+
+  "mediaTypes": {
+    "supportedForUpload": ["image/jpeg", "image/png", "audio/mpeg", "audio/ogg", "audio/wav", "video/mp4", "application/pdf", "application/zip", "image/webp"],
+    "uploadEndpoint": "POST /api/upload",
+    "uploadModes": ["raw-binary", "base64-encoded"],
+    "decryptEndpoint": "POST /api/decrypt-media",
+    "decryptDescription": "Decrypt media from incoming webhook messages. Returns publicUrl valid for 1 hour.",
+    "note": "Media from webhooks is encrypted. Use decrypt-media endpoint + mediaKey + url from the webhook payload."
+  }
+}
