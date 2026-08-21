@@ -3,6 +3,7 @@ import cors from "@fastify/cors";
 import type BetterSqlite3 from "better-sqlite3";
 import { WASTAT_VERSION } from "@wastat/shared";
 import { createEngine } from "./engine.js";
+import { registerApiRoutes } from "./api.js";
 import { realClock, type Clock } from "./scheduler.js";
 
 export interface AppDeps {
@@ -21,6 +22,7 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
   const engine = createEngine(db, { clock: deps.clock ?? realClock, sendMessage: deps.sendMessage });
 
   await app.register(cors, { origin: true });
+  registerApiRoutes(app, db);
 
   app.get("/health", async () => ({
     status: "ok",
