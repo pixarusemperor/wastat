@@ -164,6 +164,47 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
     });
   }
 
+  const getActiveWorkflows = db.prepare("SELECT id FROM workflows WHERE active = 1");
+  const getKeywordNodes = db.prepare(
+    "SELECT workflow_id, config FROM workflow_nodes WHERE type = 'keyword'",
+  );
+
+  /**
+   * PRD §17: route one incoming message across all active workflows.
+   * Winner: highest similarity → highest configured priority → lowest workflow id.
+   * Returns the new execution id, or null when nothing matches.
+   */
+  function handleIncomingMessage(
+    sessionId: number,
+    contactId: number,
+    messageId: number,
+  ): number | null {
+    const msg = db
+      .prepare("SELECT text FROM messages WHERE id = ?")
+      .get(messageId) as { text: string | null } | undefined;
+    if (!msg) return null;
+
+    const active = new Set((getActiveWorkflows.all() as Array<{ id: number }>).map((w) => w.id));
+    let best: { workflowId: number; score: number; priority: number } | null = null;
+    for (const row of getKeywordNodes.all() as Array<{ workflow_id: number; config: string }>) {
+      if (!active.has(row.workflow_id)) continue;
+      const config = JSON.parse(row.config) as KeywordMatchConfig & { priority?: number };
+      const { score, matched } = evaluateMatch(config, msg.text ?? "");
+      if (!matched) continue;
+      const priority = config.priority ?? 0;
+      if (
+        !best ||
+        score > best.score ||
+        (score === best.score && priority > best.priority) ||
+        (score === best.score && priority === best.priority && row.workflow_id < best.workflowId)
+      ) {
+        best = { workflowId: row.workflow_id, score, priority };
+      }
+    }
+    if (!best) return null;
+    return engine.startExecution(best.workflowId, sessionId, contactId, messageId);
+  }
+
   const engine = {
     async executeJob(job: JobRow) {
       if (job.type === "resume") {
@@ -212,5 +253,5 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
 
   const scheduler = createScheduler(db, engine.executeJob, clock);
 
-  return { ...engine, scheduler };
+  return { ...engine, handleIncomingMessage, scheduler };
 }

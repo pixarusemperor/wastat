@@ -266,4 +266,90 @@ describe("engine", () => {
       message_type: "media",
     });
   });
+
+  describe("incoming-message routing (PRD §17)", () => {
+    function keywordWorkflow(
+      db: Database.Database,
+      phrase: string,
+      threshold = 75,
+      priority = 0,
+    ): number {
+      const wf = db
+        .prepare("INSERT INTO workflows (name, active) VALUES ('wf', 1)")
+        .run();
+      const workflowId = Number(wf.lastInsertRowid);
+      const insNode = db.prepare(
+        "INSERT INTO workflow_nodes (workflow_id, node_key, type, config) VALUES (?, ?, ?, ?)",
+      );
+      insNode.run(workflowId, "t", "trigger", "{}");
+      insNode.run(
+        workflowId,
+        "k",
+        "keyword",
+        JSON.stringify({ phrase, algorithm: "dice", threshold, priority }),
+      );
+      insNode.run(workflowId, "e", "end", "{}");
+      const insEdge = db.prepare(
+        "INSERT INTO workflow_edges (workflow_id, source_key, target_key) VALUES (?, ?, ?)",
+      );
+      insEdge.run(workflowId, "t", "k");
+      insEdge.run(workflowId, "k", "e");
+      return workflowId;
+    }
+
+    function seedIncoming(db: Database.Database, text: string) {
+      const s = db.prepare("INSERT INTO sessions (name, provider_session_id) VALUES ('A','pa')").run();
+      const c = db.prepare("INSERT INTO contacts (phone) VALUES ('+15550001')").run();
+      const m = db
+        .prepare(
+          "INSERT INTO messages (session_id, contact_id, direction, message_type, text, timestamp) VALUES (?, ?, 'in', 'text', ?, '2026-01-01T00:00:00Z')",
+        )
+        .run(Number(s.lastInsertRowid), Number(c.lastInsertRowid), text);
+      return {
+        sessionId: Number(s.lastInsertRowid),
+        contactId: Number(c.lastInsertRowid),
+        messageId: Number(m.lastInsertRowid),
+      };
+    }
+
+    it("routes to the workflow whose keyword matches best", async () => {
+      const { db, engine } = setup();
+      // "price" workflow scores ~0.78 against the input; "delivery" scores much lower
+      const priceWf = keywordWorkflow(db, "I want to know the price", 60);
+      const deliveryWf = keywordWorkflow(db, "where is my delivery", 60);
+
+      const { sessionId, contactId, messageId } = seedIncoming(db, "hello I want to know your PRICE");
+      const execId = engine.handleIncomingMessage(sessionId, contactId, messageId)!;
+
+      expect(execId).not.toBeNull();
+      expect(
+        db.prepare("SELECT workflow_id FROM workflow_executions WHERE id = ?").get(execId),
+      ).toEqual({ workflow_id: priceWf });
+      void deliveryWf;
+    });
+
+    it("breaks ties by priority, then lowest workflow id", async () => {
+      const { db, engine } = setup();
+      const lowPriority = keywordWorkflow(db, "refund please", 100, 1);
+      const highPriority = keywordWorkflow(db, "refund please", 100, 9);
+      const anotherHigh = keywordWorkflow(db, "refund please", 100, 9);
+
+      const { sessionId, contactId, messageId } = seedIncoming(db, "refund please");
+      const execId = engine.handleIncomingMessage(sessionId, contactId, messageId)!;
+
+      // all three match at score 1.0 → priority 9 wins → lowest id among those wins
+      expect(highPriority).toBeLessThan(anotherHigh);
+      expect(
+        db.prepare("SELECT workflow_id FROM workflow_executions WHERE id = ?").get(execId),
+      ).toEqual({ workflow_id: highPriority });
+      void lowPriority;
+    });
+
+    it("returns null when no workflow matches", async () => {
+      const { db, engine } = setup();
+      keywordWorkflow(db, "refund please", 100);
+      const { sessionId, contactId, messageId } = seedIncoming(db, "good morning");
+      expect(engine.handleIncomingMessage(sessionId, contactId, messageId)).toBeNull();
+    });
+  });
 });

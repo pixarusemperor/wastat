@@ -1,16 +1,24 @@
-import Fastify from "fastify";
-import cors from "@fastify/cors";
-import { WASTAT_VERSION } from "@wastat/shared";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { buildApp } from "./app.js";
+import { makeWasenderTransport, openDb } from "./wasender.js";
 
-const app = Fastify({ logger: true });
+const dbPath = process.env.DB_PATH ?? "wastat.db";
+const db = openDb(dbPath);
+db.exec(readFileSync(new URL("./db/schema.sql", import.meta.url), "utf8"));
 
-await app.register(cors, { origin: true });
+// ponytail: session API keys are read as plaintext until the encryption
+// decision lands; the column is already BLOB so it upgrades in place.
+const getApiKey = db.prepare("SELECT api_key_encrypted FROM sessions WHERE id = ?");
 
-app.get("/health", async () => ({
-  status: "ok",
-  version: WASTAT_VERSION,
-  time: new Date().toISOString(),
-}));
+const app = await buildApp(db, {
+  sendMessage: async (input) => {
+    const row = getApiKey.get(input.sessionId) as { api_key_encrypted: Buffer | string | null };
+    const apiKey = row?.api_key_encrypted?.toString("utf8");
+    if (!apiKey) throw { status: 500, code: "NO_SESSION_KEY" };
+    return makeWasenderTransport()({ ...input, apiKey });
+  },
+});
 
 const port = Number(process.env.PORT ?? 4000);
 
