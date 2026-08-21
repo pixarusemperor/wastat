@@ -6,6 +6,10 @@ dist/
 build/
 .next/
 out/
+*.tsbuildinfo
+
+# Test coverage
+coverage/
 
 # Environment / secrets
 .env

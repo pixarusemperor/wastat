@@ -1,0 +1,16 @@
+{
+  "name": "wastat",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Wasender Workflow Automation & A/B Testing Engine",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "dev:server": "npm run dev --workspace @wastat/server",
+    "dev:web": "npm run dev --workspace @wastat/web"
+  }
+}
