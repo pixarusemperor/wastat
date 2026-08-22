@@ -23,7 +23,8 @@ COPY packages/server/package.json packages/server/
 COPY packages/shared/package.json packages/shared/
 RUN npm ci --omit=dev
 COPY --from=build /app/packages/web/dist /app/public
+COPY packages/shared/src /app/packages/shared/src
 COPY packages/server/src /app/packages/server/src
 EXPOSE 3000
 VOLUME /app/data
-CMD ["npm", "run", "start"]
+CMD ["npm", "run", "start", "--workspace", "@wastat/server"]
