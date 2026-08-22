@@ -16,6 +16,7 @@ export interface WasenderSession {
 export function makeWasenderAdmin(pat: string, fetchImpl: typeof fetch = fetch) {
   async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
     const res = await fetchImpl(`${BASE}${path}`, {
+      signal: AbortSignal.timeout(15_000),
       method,
       headers: { Authorization: `Bearer ${pat}`, "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -26,8 +27,11 @@ export function makeWasenderAdmin(pat: string, fetchImpl: typeof fetch = fetch) 
 
   return {
     listSessions: () => call<{ data: WasenderSession[] }>("GET", "/whatsapp-sessions").then((r) => r.data),
-    createSession: (name: string) =>
-      call<{ data: WasenderSession }>("POST", "/whatsapp-sessions", { name }).then((r) => r.data),
+    createSession: (name: string, webhookUrl?: string) =>
+      call<{ data: WasenderSession }>("POST", "/whatsapp-sessions", {
+        name,
+        ...(webhookUrl ? { webhook_url: webhookUrl } : {}),
+      }).then((r) => r.data),
     deleteSession: (id: number) => call<unknown>("DELETE", `/whatsapp-sessions/${id}`),
   };
 }

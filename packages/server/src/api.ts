@@ -152,6 +152,63 @@ export function registerApiRoutes(
     return db.prepare("SELECT id, name, description, active FROM experiments ORDER BY id").all();
   });
 
+  // PRD §33: reply-rate per variant.
+  app.get<{ Params: { id: string } }>("/api/experiments/:id/stats", async (request, reply) => {
+    const expId = Number(request.params.id);
+    const exp = db.prepare("SELECT id FROM experiments WHERE id = ?").get(expId);
+    if (!exp) return reply.code(404).send({ error: "not found" });
+    const rows = db
+      .prepare(`
+        SELECT w.id AS workflowId, w.name,
+          (SELECT COUNT(DISTINCT contact_id) FROM experiment_assignments WHERE experiment_id = ? AND workflow_id = w.id) AS assigned,
+          (SELECT COUNT(DISTINCT m.contact_id) FROM messages m
+             JOIN workflow_executions we ON we.id = m.workflow_execution_id
+            WHERE we.workflow_id = w.id AND m.direction = 'out') AS messaged,
+          (SELECT COUNT(DISTINCT r.contact_id) FROM messages r
+            WHERE r.direction = 'in' AND r.in_reply_to_id IS NOT NULL
+              AND EXISTS (SELECT 1 FROM messages o WHERE o.id = r.in_reply_to_id
+                          AND o.workflow_execution_id IN (SELECT id FROM workflow_executions WHERE workflow_id = w.id))) AS replied
+        FROM workflows w
+        JOIN experiment_assignments ea ON ea.workflow_id = w.id
+        WHERE w.experiment_id = ?
+        GROUP BY w.id ORDER BY w.id
+      `)
+      .all(expId, expId) as Array<{ workflowId: number; name: string; assigned: number; messaged: number; replied: number }>;
+    return rows.map((r) => ({
+      ...r,
+      replyRate: r.assigned > 0 ? Math.round((r.replied / r.assigned) * 1000) / 10 : 0,
+    }));
+  });
+
+  // PRD §46: inbox — conversations per session, then a thread.
+  app.get<{ Querystring: { sessionId?: string } }>("/api/conversations", async (request) => {
+    const sessionId = Number(request.query.sessionId ?? 1);
+    return db
+      .prepare(`
+        SELECT c.id AS contactId, c.phone, c.name,
+               MAX(m.timestamp) AS lastAt,
+               (SELECT text FROM messages WHERE session_id = ? AND contact_id = c.id ORDER BY id DESC LIMIT 1) AS lastMessage
+        FROM contacts c
+        JOIN messages m ON m.contact_id = c.id AND m.session_id = ?
+        GROUP BY c.id ORDER BY lastAt DESC LIMIT 200
+      `)
+      .all(sessionId, sessionId);
+  });
+
+  app.get<{ Querystring: { sessionId?: string; contactId?: string } }>(
+    "/api/messages",
+    async (request, reply) => {
+      const { sessionId = "1", contactId = "" } = request.query;
+      if (!contactId) return reply.code(400).send({ error: "contactId is required" });
+      return db
+        .prepare(`
+          SELECT id, direction, message_type AS messageType, text, status, timestamp
+          FROM messages WHERE session_id = ? AND contact_id = ? ORDER BY id ASC LIMIT 500
+        `)
+        .all(Number(sessionId), Number(contactId));
+    },
+  );
+
   // ---- Sessions management (Wasender account-level) ----
   if (opts?.wasenderPat) {
     const admin = makeWasenderAdmin(opts.wasenderPat, opts.fetchImpl);
@@ -174,7 +231,10 @@ export function registerApiRoutes(
       const name = typeof request.body?.name === "string" ? request.body.name.trim() : "";
       if (!name) return reply.code(400).send({ error: "name is required" });
       try {
-        const created = await admin.createSession(name);
+        // Auto-point the session's webhook at this deployment so events flow back.
+        const base = process.env.PUBLIC_BASE_URL;
+        const webhookUrl = base ? `${base.replace(/\/$/, "")}/webhooks/wasender/{id}` : undefined;
+        const created = await admin.createSession(name, webhookUrl);
         upsertSession(db, created);
         const local = getLocal.get(String(created.id)) as { id: number } | undefined;
         return reply.code(201).send({

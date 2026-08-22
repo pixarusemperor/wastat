@@ -5,6 +5,23 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export interface Conversation {
+  contactId: number;
+  phone: string;
+  name: string | null;
+  lastAt: string;
+  lastMessage: string | null;
+}
+
+export interface ChatMessage {
+  id: number;
+  direction: "in" | "out";
+  messageType: string;
+  text: string | null;
+  status: string;
+  timestamp: string;
+}
+
 export interface WorkflowSummary {
   id: number;
   name: string;
@@ -37,5 +54,18 @@ export const api = {
   deleteWorkflow: (id: string) =>
     fetch(`/api/workflows/${id}`, { method: "DELETE" }).then((r) => json<{ ok: boolean }>(r)),
   listSessions: () =>
-    fetch("/api/sessions").then((r) => json<Array<{ id: number; name: string; providerSessionId: string; status: string }>>(r)),
+    fetch("/api/sessions").then((r) =>
+      json<Array<{ id: number; name: string; providerSessionId: string; status: string }>>(r),
+    ),
+  createSession: (name: string) =>
+    fetch("/api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    }).then((r) => json<{ id: number; providerSessionId: string }>(r)),
+  deleteSession: (id: number) =>
+    fetch(`/api/sessions/${id}`, { method: "DELETE" }).then((r) => json<{ ok: boolean }>(r)),
+  conversations: () => fetch("/api/conversations").then((r) => json<Conversation[]>(r)),
+  messages: (contactId: number) =>
+    fetch(`/api/messages?contactId=${contactId}`).then((r) => json<ChatMessage[]>(r)),
 };

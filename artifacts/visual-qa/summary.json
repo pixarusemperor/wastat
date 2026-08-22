@@ -1,0 +1,42 @@
+{
+  "base": "http://localhost:4597",
+  "failures": 0,
+  "summary": [
+    {
+      "page": "workflows",
+      "viewport": "desktop",
+      "blank": false,
+      "errors": []
+    },
+    {
+      "page": "inbox",
+      "viewport": "desktop",
+      "blank": false,
+      "errors": []
+    },
+    {
+      "page": "sessions",
+      "viewport": "desktop",
+      "blank": false,
+      "errors": []
+    },
+    {
+      "page": "workflows",
+      "viewport": "mobile",
+      "blank": false,
+      "errors": []
+    },
+    {
+      "page": "inbox",
+      "viewport": "mobile",
+      "blank": false,
+      "errors": []
+    },
+    {
+      "page": "sessions",
+      "viewport": "mobile",
+      "blank": false,
+      "errors": []
+    }
+  ]
+}

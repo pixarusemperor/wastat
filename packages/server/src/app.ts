@@ -110,6 +110,7 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
       const msg = db
         .prepare("SELECT id, contact_id FROM messages WHERE provider_message_id = ?")
         .get(key.id) as { id: number; contact_id: number };
+      engine.attributeReply(msg.id); // PRD §32 — even when nothing matches
       const executionId = engine.handleIncomingMessage(session.id, msg.contact_id, msg.id);
       return { ok: true, executionId };
     },

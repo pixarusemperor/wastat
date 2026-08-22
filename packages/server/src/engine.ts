@@ -202,10 +202,74 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
       }
     }
     if (!best) return null;
-    return engine.startExecution(best.workflowId, sessionId, contactId, messageId);
+
+    // PRD §30–31: within an experiment, contacts are distributed across
+    // active variants (least-assigned first, ties by lowest id) and then
+    // stick to that variant for every future message in the experiment.
+    let targetWorkflowId = best.workflowId;
+    const expId = (
+      db.prepare("SELECT experiment_id FROM workflows WHERE id = ?").get(best.workflowId) as {
+        experiment_id: number | null;
+      }
+    ).experiment_id;
+    if (expId != null) {
+      const sticky = db
+        .prepare(
+          "SELECT workflow_id FROM experiment_assignments WHERE experiment_id = ? AND contact_id = ?",
+        )
+        .get(expId, contactId) as { workflow_id: number } | undefined;
+      if (sticky) {
+        targetWorkflowId = sticky.workflow_id;
+      } else {
+        const pick = db
+          .prepare(`
+            SELECT w.id FROM workflows w
+            LEFT JOIN experiment_assignments ea
+              ON ea.workflow_id = w.id AND ea.experiment_id = w.experiment_id
+            WHERE w.experiment_id = ? AND w.active = 1
+            GROUP BY w.id
+            ORDER BY COUNT(ea.contact_id) ASC, w.id ASC
+            LIMIT 1
+          `)
+          .get(expId) as { id: number } | undefined;
+        if (!pick) return null;
+        targetWorkflowId = pick.id;
+        db.prepare(
+          "INSERT INTO experiment_assignments (experiment_id, contact_id, workflow_id) VALUES (?, ?, ?)",
+        ).run(expId, contactId, pick.id);
+      }
+    }
+
+    return engine.startExecution(targetWorkflowId, sessionId, contactId, messageId);
   }
 
   const engine = {
+    /**
+     * PRD §32: link an incoming message to the contact's most recent outbound
+     * message (whose execution identifies workflow/experiment). No-op when the
+     * contact has no prior outbound traffic.
+     */
+    attributeReply(messageId: number): void {
+      const msg = db
+        .prepare("SELECT session_id, contact_id FROM messages WHERE id = ? AND direction = 'in'")
+        .get(messageId) as { session_id: number; contact_id: number } | undefined;
+      if (!msg) return;
+      const lastOut = db
+        .prepare(`
+          SELECT m.id, m.workflow_execution_id FROM messages m
+          WHERE m.session_id = ? AND m.contact_id = ? AND m.direction = 'out'
+            AND m.workflow_execution_id IS NOT NULL
+          ORDER BY m.id DESC LIMIT 1
+        `)
+        .get(msg.session_id, msg.contact_id) as
+        | { id: number; workflow_execution_id: number }
+        | undefined;
+      if (!lastOut) return;
+      db.prepare("UPDATE messages SET in_reply_to_id = ? WHERE id = ?").run(lastOut.id, messageId);
+      db.prepare(
+        "INSERT INTO events (event_type, execution_id, message_id, data) VALUES ('reply.attributed', ?, ?, '{}')",
+      ).run(lastOut.workflow_execution_id, messageId);
+    },
     async executeJob(job: JobRow) {
       if (job.type === "resume") {
         if (job.node_key) advanceFrom(job.execution_id, job.node_key);

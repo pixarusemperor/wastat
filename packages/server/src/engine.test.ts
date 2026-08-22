@@ -246,6 +246,44 @@ describe("engine", () => {
     expect(db.prepare("SELECT COUNT(*) AS n FROM workflow_executions").get()).toEqual({ n: 1 });
   });
 
+  it("attributes a customer reply to their latest execution (PRD §32)", async () => {
+    const { db, clock, engine } = setup();
+    const workflowId = seedWorkflow(
+      db,
+      [
+        { key: "t", type: "trigger" },
+        { key: "s", type: "send_text", config: { text: "hi" } },
+        { key: "e", type: "end" },
+      ],
+      [["t", "s"], ["s", "e"]],
+    );
+    const { sessionId, contactId } = seedContactSession(db);
+    const execId = engine.startExecution(workflowId, sessionId, contactId)!;
+    await engine.scheduler.tick();
+
+    // customer's reply arrives
+    const reply = db
+      .prepare(
+        "INSERT INTO messages (session_id, contact_id, direction, message_type, text, timestamp) VALUES (?, ?, 'in', 'text', 'ok thanks', '2026-01-02T00:00:00Z')",
+      )
+      .run(sessionId, contactId);
+
+    engine.attributeReply(Number(reply.lastInsertRowid));
+
+    const linked = db
+      .prepare("SELECT in_reply_to_id FROM messages WHERE id = ?")
+      .get(Number(reply.lastInsertRowid)) as { in_reply_to_id: number | null };
+    const outMsgId = (
+      db.prepare("SELECT id FROM messages WHERE direction = 'out'").get() as { id: number }
+    ).id;
+    expect(linked.in_reply_to_id).toBe(outMsgId);
+    const evt = db
+      .prepare("SELECT execution_id FROM events WHERE event_type = 'reply.attributed'")
+      .get() as { execution_id: number };
+    expect(evt.execution_id).toBe(execId);
+    void clock;
+  });
+
   it("send_media nodes queue a media send", async () => {
     const { db, engine, sent } = setup();
     const workflowId = seedWorkflow(
@@ -297,16 +335,18 @@ describe("engine", () => {
       return workflowId;
     }
 
-    function seedIncoming(db: Database.Database, text: string) {
-      const s = db.prepare("INSERT INTO sessions (name, provider_session_id) VALUES ('A','pa')").run();
-      const c = db.prepare("INSERT INTO contacts (phone) VALUES ('+15550001')").run();
+    function seedIncoming(db: Database.Database, text: string, sessionId?: number) {
+      const sid = sessionId ?? Number(db.prepare("INSERT INTO sessions (name, provider_session_id) VALUES ('S', 'ps-' || random())").run().lastInsertRowid);
+      const c = db
+        .prepare("INSERT INTO contacts (phone) VALUES ('+1555' || (abs(random()) % 900000 + 100000) || '-' || abs(random()))")
+        .run();
       const m = db
         .prepare(
           "INSERT INTO messages (session_id, contact_id, direction, message_type, text, timestamp) VALUES (?, ?, 'in', 'text', ?, '2026-01-01T00:00:00Z')",
         )
-        .run(Number(s.lastInsertRowid), Number(c.lastInsertRowid), text);
+        .run(sid, Number(c.lastInsertRowid), text);
       return {
-        sessionId: Number(s.lastInsertRowid),
+        sessionId: sid,
         contactId: Number(c.lastInsertRowid),
         messageId: Number(m.lastInsertRowid),
       };
@@ -350,6 +390,47 @@ describe("engine", () => {
       keywordWorkflow(db, "refund please", 100);
       const { sessionId, contactId, messageId } = seedIncoming(db, "good morning");
       expect(engine.handleIncomingMessage(sessionId, contactId, messageId)).toBeNull();
+    });
+
+    it("distributes experiment variants equally and sticks assignments", async () => {
+      const { db, engine } = setup();
+      // three variants of ONE experiment, identical keywords
+      const mkVariant = () => {
+        db.prepare("INSERT OR IGNORE INTO experiments (id, name) VALUES (1, 'exp')").run();
+        const wf = db.prepare("INSERT INTO workflows (name, active) VALUES ('v',1)").run();
+        const id = Number(wf.lastInsertRowid);
+        db.prepare("UPDATE workflows SET experiment_id = 1 WHERE id = ?").run(id);
+        const insNode = db.prepare("INSERT INTO workflow_nodes (workflow_id, node_key, type, config) VALUES (?, ?, ?, ?)");
+        insNode.run(id, "t", "trigger", "{}");
+        insNode.run(id, "k", "keyword", JSON.stringify({ phrase: "price", algorithm: "exact", threshold: 100 }));
+        insNode.run(id, "e", "end", "{}");
+        const e2 = db.prepare("INSERT INTO workflow_edges (workflow_id, source_key, target_key) VALUES (?, ?, ?)");
+        e2.run(id, "t", "k"); e2.run(id, "k", "e");
+        return id;
+      };
+      const v1 = mkVariant();
+      const v2 = mkVariant();
+      const v3 = mkVariant();
+
+      const a = seedIncoming(db, "price");       // contact A
+      const b = seedIncoming(db, "price");       // contact B
+      const c = seedIncoming(db, "price");       // contact C
+
+      const eA = engine.handleIncomingMessage(a.sessionId, a.contactId, a.messageId)!;
+      const eB = engine.handleIncomingMessage(b.sessionId, b.contactId, b.messageId)!;
+      const eC = engine.handleIncomingMessage(c.sessionId, c.contactId, c.messageId)!;
+      void eB; void eC;
+
+      const wfOf = (eid: number) =>
+        (db.prepare("SELECT workflow_id FROM workflow_executions WHERE id = ?").get(eid) as any).workflow_id;
+
+      // equal distribution: each variant got exactly one contact (ties -> lowest id)
+      expect([wfOf(eA), wfOf(eB), wfOf(eC)].sort((x, y) => x - y)).toEqual([v1, v2, v3].sort((x, y) => x - y));
+
+      // sticky: contact A messages again -> lands on their original variant
+      const a2 = seedIncoming(db, "price");
+      const eA2 = engine.handleIncomingMessage(a2.sessionId, a2.contactId, a2.messageId)!;
+      expect(wfOf(eA2)).toBe(wfOf(eA));
     });
   });
 });

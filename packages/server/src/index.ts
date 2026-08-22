@@ -15,12 +15,14 @@ process.env.STATIC_DIR ||= "/app/public";
 
 const app = await buildApp(db, {
   wasenderPat: process.env.WASENDER_PAT,
-  sendMessage: async (input) => {
+  sendMessage: process.env.MOCK_SEND
+    ? async () => ({ providerMessageId: `mock-${Date.now()}` })
+    : async (input) => {
     const row = getApiKey.get(input.sessionId) as { api_key_encrypted: Buffer | string | null };
     const apiKey = row?.api_key_encrypted?.toString("utf8");
     if (!apiKey) throw { status: 500, code: "NO_SESSION_KEY" };
-    return makeWasenderTransport()({ ...input, apiKey });
-  },
+      return makeWasenderTransport()({ ...input, apiKey });
+    },
 });
 
 const port = Number(process.env.PORT ?? 4000);
