@@ -1,19 +1,10 @@
-# Placeholder for Coolify deployment (PRD §2, §38).
-# Finalize after the Docker docs snapshot (wayfinder map ticket #4) and the
-# deployment-configuration ticket. Dockerfiles for server/ and web/ will be added there.
+# Local run of the production image (Coolify builds the same Dockerfile).
 services:
   server:
-    build: ./packages/server
+    build: .
     ports:
-      - "4000:4000"
+      - "3000:3000"
     env_file:
       - .env
     volumes:
       - ./data:/app/data
-
-  web:
-    build: ./packages/web
-    ports:
-      - "5173:5173"
-    depends_on:
-      - server

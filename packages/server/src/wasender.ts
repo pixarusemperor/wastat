@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import type BetterSqlite3 from "better-sqlite3";
 import { createEngine, type SendMessageInput } from "./engine.js";
 
-const WASENDER_API = process.env.WASENDER_API_URL ?? "https://www.wasenderapi.com/api/send-message";
+const WASENDER_API = `${process.env.WASENDER_BASE_URL ?? "https://www.wasenderapi.com/api"}/send-message`;
 
 /**
  * Thin Wasender transport. `apiKey` is the session's API key (PAT is only for

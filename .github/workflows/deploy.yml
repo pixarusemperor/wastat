@@ -1,0 +1,101 @@
+name: Deploy wastat to Coolify
+
+# Deploys wastat (Wasender Workflow Automation & A/B Testing Engine) to Coolify
+# (app at https://wassflow.orizongroup.online).
+#
+# Adapted from coolify-deploy-playbook/templates/deploy.yml — see
+# docs/coolify-deploy-playbook/ for the proven procedure and runbooks.
+#
+# Required repo secrets:
+#   COOLIFY_API_TOKEN — Coolify API token (deploy permission)
+#   COOLIFY_APP_UUID  — wastat application UUID in Coolify
+#   COOLIFY_BASE_URL  — https://coolifyone.orizongroup.online (default)
+#   COOLIFY_WEBHOOK   — optional per-app Deploy Webhook URL
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: coolify-deploy-wastat-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Trigger Coolify deploy
+        env:
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
+          APP_UUID: ${{ secrets.COOLIFY_APP_UUID }}
+          COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
+          COOLIFY_URL: ${{ secrets.COOLIFY_BASE_URL }}
+        run: |
+          set -euo pipefail
+          BASE="${COOLIFY_URL:-https://coolifyone.orizongroup.online}"
+
+          if [ -n "${COOLIFY_WEBHOOK}" ]; then
+            echo "==> Triggering via COOLIFY_WEBHOOK"
+            RESPONSE=$(curl -sk -S --fail-with-body \
+              -X GET "${COOLIFY_WEBHOOK}" \
+              --header "Authorization: Bearer ${COOLIFY_TOKEN}")
+            echo "${RESPONSE}" | jq . || echo "${RESPONSE}"
+            DEPLOY_UUID=$(echo "${RESPONSE}" | jq -r '.deployments[0].deployment_uuid // .deployments[0].uuid // .deployment_uuid // empty' 2>/dev/null || true)
+            if [ -z "${DEPLOY_UUID}" ]; then
+              echo "::error::Webhook response did not contain a deployment UUID — aborting instead of reporting a false success."
+              exit 1
+            fi
+            echo "deployment_uuid=${DEPLOY_UUID}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -z "${COOLIFY_TOKEN}" ] || [ -z "${APP_UUID}" ]; then
+            echo "::error::Missing COOLIFY_WEBHOOK, or COOLIFY_API_TOKEN + COOLIFY_APP_UUID"
+            exit 1
+          fi
+          echo "==> Deploying app ${APP_UUID} via API"
+          RESPONSE=$(curl -sk -S --fail-with-body \
+            -X POST \
+            -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"uuid\": \"${APP_UUID}\"}" \
+            "${BASE}/api/v1/deploy")
+          echo "${RESPONSE}" | jq .
+          DEPLOY_UUID=$(echo "${RESPONSE}" | jq -r '.deployments[0].deployment_uuid // .deployments[0].uuid // .deployment_uuid // empty')
+          if [ -z "${DEPLOY_UUID}" ]; then
+            echo "::error::No deployment UUID returned — is the token scoped to deploy?"
+            exit 1
+          fi
+          echo "deployment_uuid=${DEPLOY_UUID}" >> "$GITHUB_OUTPUT"
+        id: trigger
+
+      - name: Wait for deployment
+        env:
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
+          APP_UUID: ${{ secrets.COOLIFY_APP_UUID }}
+          COOLIFY_URL: ${{ secrets.COOLIFY_BASE_URL }}
+        run: |
+          set -euo pipefail
+          BASE="${COOLIFY_URL:-https://coolifyone.orizongroup.online}"
+          MAX_ATTEMPTS=40
+          INTERVAL=15
+          for i in $(seq 1 ${MAX_ATTEMPTS}); do
+            RESPONSE=$(curl -sk -S \
+              -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
+              "${BASE}/api/v1/deployments/applications/${APP_UUID}")
+            STATUS=$(echo "${RESPONSE}" | jq -r '.deployments[0].status // "unknown"')
+            echo "[${i}/${MAX_ATTEMPTS}] status=${STATUS}"
+            case "${STATUS}" in
+              finished) echo "::notice::DEPLOY SUCCEEDED"; exit 0 ;;
+              failed)   echo "::error::DEPLOY FAILED"; echo "${RESPONSE}" | jq .; exit 1 ;;
+              *)        sleep ${INTERVAL} ;;
+            esac
+          done
+          echo "::error::TIMEOUT — deployment did not finish in 10 minutes"
+          exit 1

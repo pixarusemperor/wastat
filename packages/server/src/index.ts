@@ -11,6 +11,8 @@ db.exec(readFileSync(new URL("./db/schema.sql", import.meta.url), "utf8"));
 // decision lands; the column is already BLOB so it upgrades in place.
 const getApiKey = db.prepare("SELECT api_key_encrypted FROM sessions WHERE id = ?");
 
+process.env.STATIC_DIR ||= "/app/public";
+
 const app = await buildApp(db, {
   sendMessage: async (input) => {
     const row = getApiKey.get(input.sessionId) as { api_key_encrypted: Buffer | string | null };

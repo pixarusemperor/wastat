@@ -1,5 +1,7 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
+import fastifyStatic from "@fastify/static";
+import { existsSync } from "node:fs";
 import type BetterSqlite3 from "better-sqlite3";
 import { WASTAT_VERSION } from "@wastat/shared";
 import { createEngine } from "./engine.js";
@@ -29,6 +31,19 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
     version: WASTAT_VERSION,
     time: new Date().toISOString(),
   }));
+
+  // Production serves the built web UI from the same origin (wassflow.orizongroup.online).
+  const staticDir = process.env.STATIC_DIR;
+  if (staticDir && existsSync(staticDir)) {
+    await app.register(fastifyStatic, { root: staticDir });
+    // SPA fallback: any non-API GET renders the app shell.
+    app.setNotFoundHandler((request, reply) => {
+      if (request.method === "GET" && !request.url.startsWith("/api") && !request.url.startsWith("/webhooks")) {
+        return reply.sendFile("index.html");
+      }
+      return reply.code(404).send({ error: "not found" });
+    });
+  }
 
   const getSession = db.prepare(
     "SELECT id, webhook_secret FROM sessions WHERE provider_session_id = ?",
