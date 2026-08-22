@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type BetterSqlite3 from "better-sqlite3";
+import { makeWasenderAdmin, upsertSession } from "./wasender-admin.js";
 
 const NODE_TYPES = new Set(["trigger", "keyword", "send_text", "send_media", "delay", "end"]);
 
@@ -62,7 +63,11 @@ function parseGraph(body: unknown): { error: string } | { graph: ParsedGraph } {
   };
 }
 
-export function registerApiRoutes(app: FastifyInstance, db: BetterSqlite3.Database): void {
+export function registerApiRoutes(
+  app: FastifyInstance,
+  db: BetterSqlite3.Database,
+  opts?: { wasenderPat?: string; fetchImpl?: typeof fetch },
+): void {
   const insertWorkflow = db.prepare(
     "INSERT INTO workflows (name, description, active, experiment_id) VALUES (?, ?, ?, ?)",
   );
@@ -146,4 +151,53 @@ export function registerApiRoutes(app: FastifyInstance, db: BetterSqlite3.Databa
   app.get("/api/experiments", async () => {
     return db.prepare("SELECT id, name, description, active FROM experiments ORDER BY id").all();
   });
+
+  // ---- Sessions management (Wasender account-level) ----
+  if (opts?.wasenderPat) {
+    const admin = makeWasenderAdmin(opts.wasenderPat, opts.fetchImpl);
+    const getLocal = db.prepare("SELECT id FROM sessions WHERE provider_session_id = ?");
+
+    /** List remote sessions and mirror them locally — the local table is the
+     * webhook-facing source of truth for api keys and secrets. */
+    async function syncSessions() {
+      for (const s of await admin.listSessions()) upsertSession(db, s);
+      return db
+        .prepare(
+          "SELECT id, name, provider_session_id AS providerSessionId, status FROM sessions ORDER BY id",
+        )
+        .all();
+    }
+
+    app.get("/api/sessions", async () => syncSessions());
+
+    app.post<{ Body: { name?: unknown } }>("/api/sessions", async (request, reply) => {
+      const name = typeof request.body?.name === "string" ? request.body.name.trim() : "";
+      if (!name) return reply.code(400).send({ error: "name is required" });
+      try {
+        const created = await admin.createSession(name);
+        upsertSession(db, created);
+        const local = getLocal.get(String(created.id)) as { id: number } | undefined;
+        return reply.code(201).send({
+          id: local?.id ?? 0,
+          providerSessionId: String(created.id),
+          name: created.name,
+          status: created.status,
+        });
+      } catch (err) {
+        request.log.error(err);
+        return reply.code(502).send({ error: "Wasender create failed" });
+      }
+    });
+
+    app.delete<{ Params: { id: string } }>("/api/sessions/:id", async (request, reply) => {
+      const localId = Number(request.params.id);
+      const row = db
+        .prepare("SELECT id, provider_session_id FROM sessions WHERE id = ?")
+        .get(localId) as { id: number; provider_session_id: string } | undefined;
+      if (!row) return reply.code(404).send({ error: "not found" });
+      await admin.deleteSession(Number(row.provider_session_id));
+      db.prepare("DELETE FROM sessions WHERE id = ?").run(localId);
+      return { ok: true };
+    });
+  }
 }

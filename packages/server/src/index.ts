@@ -14,6 +14,7 @@ const getApiKey = db.prepare("SELECT api_key_encrypted FROM sessions WHERE id = 
 process.env.STATIC_DIR ||= "/app/public";
 
 const app = await buildApp(db, {
+  wasenderPat: process.env.WASENDER_PAT,
   sendMessage: async (input) => {
     const row = getApiKey.get(input.sessionId) as { api_key_encrypted: Buffer | string | null };
     const apiKey = row?.api_key_encrypted?.toString("utf8");

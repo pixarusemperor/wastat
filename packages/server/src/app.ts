@@ -17,6 +17,10 @@ export interface AppDeps {
     text?: string;
     mediaId?: number;
   }) => Promise<{ providerMessageId: string }>;
+  /** When set, enables /api/sessions management (Wasender account-level). */
+  wasenderPat?: string;
+  /** Injectable for tests. */
+  fetchImpl?: typeof fetch;
 }
 
 export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promise<FastifyInstance> {
@@ -24,7 +28,7 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
   const engine = createEngine(db, { clock: deps.clock ?? realClock, sendMessage: deps.sendMessage });
 
   await app.register(cors, { origin: true });
-  registerApiRoutes(app, db);
+  registerApiRoutes(app, db, { wasenderPat: deps.wasenderPat, fetchImpl: deps.fetchImpl });
 
   app.get("/health", async () => ({
     status: "ok",
