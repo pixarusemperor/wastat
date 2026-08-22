@@ -34,4 +34,8 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(graph),
     }).then((r) => json<{ ok: boolean }>(r)),
+  deleteWorkflow: (id: string) =>
+    fetch(`/api/workflows/${id}`, { method: "DELETE" }).then((r) => json<{ ok: boolean }>(r)),
+  listSessions: () =>
+    fetch("/api/sessions").then((r) => json<Array<{ id: number; name: string; providerSessionId: string; status: string }>>(r)),
 };
