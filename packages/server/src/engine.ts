@@ -1,5 +1,5 @@
 import type BetterSqlite3 from "better-sqlite3";
-import { evaluateMatch, type KeywordMatchConfig } from "@wastat/shared";
+import { evaluateMatch, normalize, type KeywordMatchConfig } from "@wastat/shared";
 import { realClock, createScheduler, type Clock, type JobRow } from "./scheduler.js";
 
 export interface SendMessageInput {
@@ -234,9 +234,15 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
           { phrase: p, algorithm, threshold },
           msg.text ?? "",
         );
-        if (matched) {
+
+        const normP = normalize(p);
+        const normM = normalize(msg.text ?? "");
+        const isWord = normP.length > 0 && normM.split(" ").includes(normP);
+
+        if (matched || isWord) {
           matchedAny = true;
-          if (score > highestScore) highestScore = score;
+          const effScore = isWord ? Math.max(score, 0.95) : score;
+          if (effScore > highestScore) highestScore = effScore;
         }
       }
 
