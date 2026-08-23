@@ -8,15 +8,18 @@
  *   baseURL defaults to http://localhost:4597 (a MOCK_SEND dev server).
  */
 import { chromium } from "playwright-core";
-import { readdirSync } from "node:fs";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { readdirSync, mkdirSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import net from "node:net";
 
-const BASE = process.argv[2] ?? process.env.VISUAL_QA_BASE ?? "http://localhost:4597";
 const OUT = "artifacts/visual-qa";
 mkdirSync(OUT, { recursive: true });
 
 const pages = [
   { name: "workflows", hash: "#/" },
+  { name: "experiments", hash: "#/experiments" },
   { name: "inbox", hash: "#/inbox" },
   { name: "sessions", hash: "#/sessions" },
 ];
@@ -24,6 +27,58 @@ const viewports = [
   { tag: "desktop", width: 1280, height: 800 },
   { tag: "mobile", width: 375, height: 720 },
 ];
+
+function freePort() {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+let BASE = process.argv[2] ?? process.env.VISUAL_QA_BASE;
+let server;
+let dbDir;
+
+if (!BASE) {
+  const isUp = await fetch("http://localhost:4597/health").then((r) => r.ok).catch(() => false);
+  if (isUp) {
+    BASE = "http://localhost:4597";
+  } else {
+    const PORT = await freePort();
+    BASE = `http://localhost:${PORT}`;
+    dbDir = mkdtempSync(join(tmpdir(), "wastat-visual-"));
+    server = spawn("npx", ["tsx", "src/index.ts"], {
+      detached: true,
+      cwd: join(process.cwd(), "packages/server"),
+      env: {
+        ...process.env,
+        MOCK_SEND: "1",
+        WASENDER_PAT: "visual-unused-pat",
+        PORT: String(PORT),
+        DB_PATH: join(dbDir, "visual.db"),
+        STATIC_DIR: join(process.cwd(), "packages/web/dist"),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    server.stderr.on("data", (d) => process.stderr.write(`[server] ${d}`));
+
+    // wait for boot
+    let up = false;
+    for (let i = 0; i < 40 && !up; i++) {
+      try {
+        up = (await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(2000) })).ok;
+      } catch {
+        await sleep(400);
+      }
+    }
+    if (!up) throw new Error("Server failed to boot for visual QA");
+  }
+}
 
 let failures = 0;
 const summary = [];
@@ -39,8 +94,9 @@ function findChromium() {
   }
 }
 
-const browser = await chromium.launch({ executablePath: findChromium() });
-for (const vp of viewports) {
+try {
+  const browser = await chromium.launch({ executablePath: findChromium() });
+  for (const vp of viewports) {
   const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height } });
   const page = await context.newPage();
   const errors = [];
@@ -61,12 +117,24 @@ for (const vp of viewports) {
   }
   await context.close();
 }
-await browser.close();
-
-writeFileSync(`${OUT}/summary.json`, JSON.stringify({ base: BASE, failures, summary }, null, 2));
-console.table(summary.map(({ page, viewport, blank, errors }) => ({ page, viewport, blank, errors: errors.length })));
-if (failures > 0) {
-  console.error(`Visual QA: ${failures} failure(s)`);
-  process.exit(1);
+  writeFileSync(`${OUT}/summary.json`, JSON.stringify({ base: BASE, failures, summary }, null, 2));
+  console.table(summary.map(({ page, viewport, blank, errors }) => ({ page, viewport, blank, errors: errors.length })));
+  if (failures > 0) {
+    console.error(`Visual QA: ${failures} failure(s)`);
+    process.exit(1);
+  }
+  console.log("Visual QA: all pages render without errors");
+} finally {
+  if (server) {
+    try {
+      process.kill(-server.pid);
+    } catch {
+      server.kill();
+    }
+  }
+  if (dbDir) {
+    try {
+      rmSync(dbDir, { recursive: true, force: true });
+    } catch {}
+  }
 }
-console.log("Visual QA: all pages render without errors");

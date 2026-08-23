@@ -42,17 +42,29 @@ function defaultConfig(type: (typeof NODE_TYPES)[number]): Record<string, unknow
 export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<GraphNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  const [meta, setMeta] = useState({ name: "", description: null as string | null, active: 0 });
+  const [meta, setMeta] = useState({
+    name: "",
+    description: null as string | null,
+    active: 0,
+    experimentId: null as number | null,
+  });
+  const [experiments, setExperiments] = useState<Array<{ id: number; name: string }>>([]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
+    api.listExperiments().then(setExperiments).catch(() => {});
     api.getWorkflow(id).then((graph) => {
       const flow = toFlow(graph);
       setNodes(flow.nodes);
       setEdges(flow.edges);
-      setMeta({ name: graph.name, description: graph.description, active: graph.active });
+      setMeta({
+        name: graph.name,
+        description: graph.description,
+        active: graph.active,
+        experimentId: graph.experimentId ?? null,
+      });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
@@ -111,6 +123,19 @@ export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void 
     }
   }
 
+  async function duplicate() {
+    try {
+      const copyName = `${meta.name} (Copy)`;
+      const created = await api.createWorkflow(copyName, meta.experimentId);
+      const graph = fromFlow({ nodes, edges }, { ...meta, name: copyName, active: 0 });
+      await api.saveWorkflow(String(created.id), graph);
+      showToast("Workflow duplicated");
+      window.location.hash = `#/workflows/${created.id}`;
+    } catch {
+      showToast("Duplicate failed", true);
+    }
+  }
+
   const selected = nodes.find((n) => n.id === selectedKey)?.data.graphNode as GraphNode | undefined;
 
   return (
@@ -126,6 +151,29 @@ export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void 
           aria-label="Workflow name"
           placeholder="Untitled workflow"
         />
+
+        <div className="toolbar-experiment-select">
+          <label htmlFor="wf-exp-select" style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+            Experiment:
+          </label>
+          <select
+            id="wf-exp-select"
+            className="input-select-sm"
+            value={meta.experimentId ?? ""}
+            onChange={(e) => {
+              const val = e.target.value;
+              setMeta({ ...meta, experimentId: val ? Number(val) : null });
+            }}
+          >
+            <option value="">None (Standalone)</option>
+            {experiments.map((exp) => (
+              <option key={exp.id} value={exp.id}>
+                {exp.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <label className="switch">
           <input
             type="checkbox"
@@ -136,6 +184,9 @@ export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void 
           <span className="switch-track" aria-hidden />
           <span className="switch-label">{meta.active === 1 ? "Live" : "Draft"}</span>
         </label>
+        <button className="btn btn-ghost btn-sm" onClick={duplicate} title="Duplicate this workflow">
+          Duplicate
+        </button>
         <button className="btn btn-primary" onClick={save}>
           Save
         </button>
@@ -260,19 +311,12 @@ function NodeConfig({
           </>
         )}
         {node.type === "send_media" && (
-          <>
-            {fieldLabel("Media asset ID", "cfg-media")}
-            <input
-              id="cfg-media"
-              className="input"
-              type="number"
-              value={num(c.mediaId)}
-              onChange={(e) => onChange({ config: { ...c, mediaId: Number(e.target.value) || null } })}
-            />
-            <p style={{ color: "var(--muted)", fontSize: "0.8125rem" }}>
-              Upload media in a later release; for now use an existing asset ID.
-            </p>
-          </>
+          <MediaConfigSection
+            mediaId={c.mediaId as number | undefined}
+            caption={String(c.text ?? "")}
+            onChangeMedia={(mediaId) => onChange({ config: { ...c, mediaId } })}
+            onChangeCaption={(text) => onChange({ config: { ...c, text } })}
+          />
         )}
         {node.type === "delay" && (
           <>
@@ -340,6 +384,123 @@ function NodeConfig({
       >
         Remove step
       </button>
+    </div>
+  );
+}
+
+function MediaConfigSection({
+  mediaId,
+  caption,
+  onChangeMedia,
+  onChangeCaption,
+}: {
+  mediaId?: number | null;
+  caption: string;
+  onChangeMedia: (id: number | null) => void;
+  onChangeCaption: (caption: string) => void;
+}) {
+  const [assets, setAssets] = useState<
+    Array<{ id: number; filename: string; mimeType: string; publicUrl: string }>
+  >([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    void api.listMedia().then(setAssets).catch(() => {});
+  }, []);
+
+  const selectedAsset = assets.find((a) => a.id === mediaId);
+
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const created = await api.uploadMedia(file);
+      setAssets((prev) => [created, ...prev.filter((a) => a.id !== created.id)]);
+      onChangeMedia(created.id);
+    } catch (err) {
+      setUploadError(String(err));
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+      <label className="field-label" htmlFor="cfg-media-select">
+        Select media asset
+      </label>
+      <select
+        id="cfg-media-select"
+        className="select"
+        value={mediaId ?? ""}
+        onChange={(e) => onChangeMedia(e.target.value ? Number(e.target.value) : null)}
+      >
+        <option value="">-- Choose an uploaded asset --</option>
+        {assets.map((a) => (
+          <option key={a.id} value={a.id}>
+            {a.filename} ({a.mimeType})
+          </option>
+        ))}
+      </select>
+
+      {selectedAsset && (
+        <div
+          style={{
+            background: "var(--surface-sunken)",
+            padding: "0.625rem",
+            borderRadius: "var(--radius-sm)",
+            fontSize: "0.8125rem",
+          }}
+        >
+          <div style={{ fontWeight: 600 }}>{selectedAsset.filename}</div>
+          <div style={{ color: "var(--muted)", fontSize: "0.75rem" }}>{selectedAsset.mimeType}</div>
+          {selectedAsset.mimeType.startsWith("image/") && (
+            <img
+              src={selectedAsset.publicUrl}
+              alt={selectedAsset.filename}
+              style={{
+                maxWidth: "100%",
+                maxHeight: 120,
+                objectFit: "contain",
+                marginTop: "0.5rem",
+                borderRadius: "var(--radius-sm)",
+              }}
+            />
+          )}
+        </div>
+      )}
+
+      <div>
+        <label className="field-label">Or upload new file</label>
+        <input
+          ref={fileInputRef}
+          type="file"
+          className="input"
+          onChange={handleFileUpload}
+          disabled={uploading}
+        />
+        {uploading && <p style={{ fontSize: "0.75rem", color: "var(--muted)", margin: "0.25rem 0" }}>Uploading to R2 storage…</p>}
+        {uploadError && <p style={{ fontSize: "0.75rem", color: "var(--danger)", margin: "0.25rem 0" }}>{uploadError}</p>}
+      </div>
+
+      <div>
+        <label className="field-label" htmlFor="cfg-media-caption">
+          Caption text (optional)
+        </label>
+        <textarea
+          id="cfg-media-caption"
+          className="textarea"
+          rows={2}
+          placeholder="Caption for image/video..."
+          value={caption}
+          onChange={(e) => onChangeCaption(e.target.value)}
+        />
+      </div>
     </div>
   );
 }

@@ -27,11 +27,24 @@ export function makeWasenderAdmin(pat: string, fetchImpl: typeof fetch = fetch) 
 
   return {
     listSessions: () => call<{ data: WasenderSession[] }>("GET", "/whatsapp-sessions").then((r) => r.data),
+    getSession: (id: number) => call<{ data: WasenderSession }>("GET", `/whatsapp-sessions/${id}`).then((r) => r.data),
     createSession: (name: string, webhookUrl?: string) =>
       call<{ data: WasenderSession }>("POST", "/whatsapp-sessions", {
         name,
         ...(webhookUrl ? { webhook_url: webhookUrl } : {}),
       }).then((r) => r.data),
+    connectSession: (id: number, linkMethod: "qr" | "passkey" = "qr") =>
+      call<{ success: boolean; data?: unknown }>("POST", `/whatsapp-sessions/${id}/connect`, { linkMethod }),
+    getQrCode: (id: number) =>
+      call<{ success: boolean; data?: { qrCode?: string } }>("GET", `/whatsapp-sessions/${id}/qrcode`).then(
+        (r) => r.data?.qrCode ?? null,
+      ),
+    getStatus: (id: number) =>
+      call<{ success: boolean; data?: { status?: string } }>("GET", `/whatsapp-sessions/${id}/status`).then(
+        (r) => r.data?.status ?? "unknown",
+      ),
+    restartSession: (id: number) => call<unknown>("POST", `/whatsapp-sessions/${id}/restart`),
+    disconnectSession: (id: number) => call<unknown>("POST", `/whatsapp-sessions/${id}/disconnect`),
     deleteSession: (id: number) => call<unknown>("DELETE", `/whatsapp-sessions/${id}`),
   };
 }

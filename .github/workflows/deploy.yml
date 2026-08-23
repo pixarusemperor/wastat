@@ -1,16 +1,7 @@
 name: Deploy wastat to Coolify
 
-# Deploys wastat (Wasender Workflow Automation & A/B Testing Engine) to Coolify
-# (app at https://wassflow.orizongroup.online).
-#
-# Adapted from coolify-deploy-playbook/templates/deploy.yml — see
-# docs/coolify-deploy-playbook/ for the proven procedure and runbooks.
-#
-# Required repo secrets:
-#   COOLIFY_API_TOKEN — Coolify API token (deploy permission)
-#   COOLIFY_APP_UUID  — wastat application UUID in Coolify
-#   COOLIFY_BASE_URL  — https://coolifyone.orizongroup.online (default)
-#   COOLIFY_WEBHOOK   — optional per-app Deploy Webhook URL
+# Deploys wastat to Coolify via GitHub Actions
+# Source of truth: https://github.com/pixarusemperor/coolify-deploy-playbook
 
 on:
   push:
@@ -31,6 +22,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Trigger Coolify deploy
+        id: trigger
         env:
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
           APP_UUID: ${{ secrets.COOLIFY_APP_UUID }}
@@ -38,7 +30,6 @@ jobs:
           COOLIFY_URL: ${{ secrets.COOLIFY_BASE_URL }}
         run: |
           set -euo pipefail
-          BASE="${COOLIFY_URL:-https://coolifyone.orizongroup.online}"
 
           if [ -n "${COOLIFY_WEBHOOK}" ]; then
             echo "==> Triggering via COOLIFY_WEBHOOK"
@@ -48,32 +39,32 @@ jobs:
             echo "${RESPONSE}" | jq . || echo "${RESPONSE}"
             DEPLOY_UUID=$(echo "${RESPONSE}" | jq -r '.deployments[0].deployment_uuid // .deployments[0].uuid // .deployment_uuid // empty' 2>/dev/null || true)
             if [ -z "${DEPLOY_UUID}" ]; then
-              echo "::error::Webhook response did not contain a deployment UUID — aborting instead of reporting a false success."
+              echo "::error::Webhook response did not contain a deployment UUID — aborting."
               exit 1
             fi
             echo "deployment_uuid=${DEPLOY_UUID}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if [ -z "${COOLIFY_TOKEN}" ] || [ -z "${APP_UUID}" ]; then
-            echo "::error::Missing COOLIFY_WEBHOOK, or COOLIFY_API_TOKEN + COOLIFY_APP_UUID"
+          if [ -z "${COOLIFY_TOKEN}" ] || [ -z "${APP_UUID}" ] || [ -z "${COOLIFY_URL}" ]; then
+            echo "::error::Missing required secrets: COOLIFY_API_TOKEN, COOLIFY_APP_UUID, or COOLIFY_BASE_URL"
             exit 1
           fi
-          echo "==> Deploying app ${APP_UUID} via API"
+
+          echo "==> Deploying app ${APP_UUID} via Coolify API"
           RESPONSE=$(curl -sk -S --fail-with-body \
             -X POST \
             -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "{\"uuid\": \"${APP_UUID}\"}" \
-            "${BASE}/api/v1/deploy")
+            "${COOLIFY_URL}/api/v1/deploy")
           echo "${RESPONSE}" | jq .
           DEPLOY_UUID=$(echo "${RESPONSE}" | jq -r '.deployments[0].deployment_uuid // .deployments[0].uuid // .deployment_uuid // empty')
           if [ -z "${DEPLOY_UUID}" ]; then
-            echo "::error::No deployment UUID returned — is the token scoped to deploy?"
+            echo "::error::No deployment UUID returned from Coolify API"
             exit 1
           fi
           echo "deployment_uuid=${DEPLOY_UUID}" >> "$GITHUB_OUTPUT"
-        id: trigger
 
       - name: Wait for deployment
         env:
@@ -82,13 +73,17 @@ jobs:
           COOLIFY_URL: ${{ secrets.COOLIFY_BASE_URL }}
         run: |
           set -euo pipefail
-          BASE="${COOLIFY_URL:-https://coolifyone.orizongroup.online}"
+          if [ -z "${APP_UUID}" ] || [ -z "${COOLIFY_URL}" ]; then
+            echo "No APP_UUID or COOLIFY_BASE_URL — skipping status poll."
+            exit 0
+          fi
+
           MAX_ATTEMPTS=40
           INTERVAL=15
           for i in $(seq 1 ${MAX_ATTEMPTS}); do
             RESPONSE=$(curl -sk -S \
               -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
-              "${BASE}/api/v1/deployments/applications/${APP_UUID}")
+              "${COOLIFY_URL}/api/v1/deployments/applications/${APP_UUID}")
             STATUS=$(echo "${RESPONSE}" | jq -r '.deployments[0].status // "unknown"')
             echo "[${i}/${MAX_ATTEMPTS}] status=${STATUS}"
             case "${STATUS}" in

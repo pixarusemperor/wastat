@@ -21,7 +21,7 @@ const app = await buildApp(db, {
     const row = getApiKey.get(input.sessionId) as { api_key_encrypted: Buffer | string | null };
     const apiKey = row?.api_key_encrypted?.toString("utf8");
     if (!apiKey) throw { status: 500, code: "NO_SESSION_KEY" };
-      return makeWasenderTransport()({ ...input, apiKey });
+      return makeWasenderTransport(db)({ ...input, apiKey });
     },
 });
 

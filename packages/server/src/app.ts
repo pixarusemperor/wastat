@@ -6,6 +6,7 @@ import type BetterSqlite3 from "better-sqlite3";
 import { WASTAT_VERSION } from "@wastat/shared";
 import { createEngine } from "./engine.js";
 import { registerApiRoutes } from "./api.js";
+import { registerMediaRoutes, type StorageProvider } from "./media.js";
 import { realClock, type Clock } from "./scheduler.js";
 
 export interface AppDeps {
@@ -21,6 +22,8 @@ export interface AppDeps {
   wasenderPat?: string;
   /** Injectable for tests. */
   fetchImpl?: typeof fetch;
+  /** Media storage provider (Cloudflare R2 or local disk). */
+  storage?: StorageProvider;
 }
 
 export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promise<FastifyInstance> {
@@ -28,7 +31,8 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
   const engine = createEngine(db, { clock: deps.clock ?? realClock, sendMessage: deps.sendMessage });
 
   await app.register(cors, { origin: true });
-  registerApiRoutes(app, db, { wasenderPat: deps.wasenderPat, fetchImpl: deps.fetchImpl });
+  registerApiRoutes(app, db, { wasenderPat: deps.wasenderPat, fetchImpl: deps.fetchImpl, engine });
+  await registerMediaRoutes(app, db, deps.storage);
 
   app.get("/health", async () => ({
     status: "ok",

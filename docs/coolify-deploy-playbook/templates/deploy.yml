@@ -1,20 +1,18 @@
-name: Deploy wadeskhybrid to Coolify
+name: Deploy to Coolify
 
-# Deploys wadeskhybrid (DeskcommCRM fork + Wasender) to Coolify
-# (app wadeskhybrid at https://wassflow.orizongroup.online).
+# Universal Coolify Deployment Workflow
+# Source of truth: https://github.com/pixarusemperor/coolify-deploy-playbook
 #
-# Uses the modern Coolify deploy endpoint (POST /api/v1/deploy) — the old
-# PATCH /applications/{uuid} pattern was proven broken (see docs/).
+# Official documentation:
+#   Coolify Deployments & Webhooks: https://coolify.io/docs/knowledge-base/applications/deployments
+#   Coolify API Reference: https://coolify.io/docs/api-reference
+#   GitHub Actions Secrets: https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions
 #
-# Required repo secrets (set on pixarusemperor/wadeskhybrid):
-#   COOLIFY_API_TOKEN — Coolify API token (deploy permission)
-#   COOLIFY_APP_UUID  — wadeskhybrid application UUID in Coolify
-#   COOLIFY_BASE_URL  — https://coolifyone.orizongroup.online (default)
-#   COOLIFY_WEBHOOK   — optional per-app Deploy Webhook URL (if ever enabled)
-#
-# The app must already exist in Coolify (public repo, Dockerfile build
-# pack, port 3000) with its env vars set.
-# See docs/DEPLOYMENT-COOKBOOK.md for full setup instructions.
+# Required repository secrets:
+#   COOLIFY_API_TOKEN — Coolify API token with deploy permissions
+#   COOLIFY_APP_UUID  — Application UUID in Coolify
+#   COOLIFY_BASE_URL  — Coolify instance base URL (e.g. https://coolify.yourdomain.com)
+#   COOLIFY_WEBHOOK   — (Optional) Per-application Deploy Webhook URL
 
 on:
   push:
@@ -22,7 +20,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: coolify-deploy-wadeskhybrid-${{ github.ref }}
+  group: coolify-deploy-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -31,6 +29,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Trigger Coolify deploy
+        id: trigger
         env:
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
           APP_UUID: ${{ secrets.COOLIFY_APP_UUID }}
@@ -38,66 +37,60 @@ jobs:
           COOLIFY_URL: ${{ secrets.COOLIFY_BASE_URL }}
         run: |
           set -euo pipefail
-          BASE="${COOLIFY_URL:-https://coolifyone.orizongroup.online}"
 
-          # Preferred: the per-app Deploy Webhook URL (official GitHub
-          # Actions pattern — a GET with the token header triggers the
-          # deploy, no UUID needed).
           if [ -n "${COOLIFY_WEBHOOK}" ]; then
-            echo "==> Triggering via COOLIFY_WEBHOOK"
+            echo "==> Triggering deployment via COOLIFY_WEBHOOK"
             RESPONSE=$(curl -sk -S --fail-with-body \
               -X GET "${COOLIFY_WEBHOOK}" \
               --header "Authorization: Bearer ${COOLIFY_TOKEN}")
             echo "${RESPONSE}" | jq . || echo "${RESPONSE}"
             DEPLOY_UUID=$(echo "${RESPONSE}" | jq -r '.deployments[0].deployment_uuid // .deployments[0].uuid // .deployment_uuid // empty' 2>/dev/null || true)
             if [ -z "${DEPLOY_UUID}" ]; then
-              echo "::error::Webhook response did not contain a deployment UUID — aborting instead of reporting a false success."
+              echo "::error::Webhook response did not contain a deployment UUID — aborting."
               exit 1
             fi
             echo "deployment_uuid=${DEPLOY_UUID}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # Fallback (proven): POST /api/v1/deploy with the app UUID.
-          if [ -z "${COOLIFY_TOKEN}" ] || [ -z "${APP_UUID}" ]; then
-            echo "::error::Missing COOLIFY_WEBHOOK, or COOLIFY_API_TOKEN + COOLIFY_APP_UUID"
+          if [ -z "${COOLIFY_TOKEN}" ] || [ -z "${APP_UUID}" ] || [ -z "${COOLIFY_URL}" ]; then
+            echo "::error::Missing required secrets: COOLIFY_API_TOKEN, COOLIFY_APP_UUID, or COOLIFY_BASE_URL"
             exit 1
           fi
-          echo "==> Deploying app ${APP_UUID} via API"
+
+          echo "==> Deploying application ${APP_UUID} via Coolify API"
           RESPONSE=$(curl -sk -S --fail-with-body \
             -X POST \
             -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "{\"uuid\": \"${APP_UUID}\"}" \
-            "${BASE}/api/v1/deploy")
+            "${COOLIFY_URL}/api/v1/deploy")
           echo "${RESPONSE}" | jq .
           DEPLOY_UUID=$(echo "${RESPONSE}" | jq -r '.deployments[0].deployment_uuid // .deployments[0].uuid // .deployment_uuid // empty')
           if [ -z "${DEPLOY_UUID}" ]; then
-            echo "::error::No deployment UUID returned — is the token scoped to deploy?"
+            echo "::error::No deployment UUID returned from Coolify API"
             exit 1
           fi
           echo "deployment_uuid=${DEPLOY_UUID}" >> "$GITHUB_OUTPUT"
-        id: trigger
 
       - name: Wait for deployment
-        # Skips silently when no APP_UUID is configured (webhook-only mode).
         env:
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
           APP_UUID: ${{ secrets.COOLIFY_APP_UUID }}
           COOLIFY_URL: ${{ secrets.COOLIFY_BASE_URL }}
         run: |
           set -euo pipefail
-          if [ -z "${APP_UUID}" ]; then
-            echo "No COOLIFY_APP_UUID — skipping status poll (webhook trigger)."
+          if [ -z "${APP_UUID}" ] || [ -z "${COOLIFY_URL}" ]; then
+            echo "No APP_UUID or COOLIFY_BASE_URL — skipping status poll."
             exit 0
           fi
-          BASE="${COOLIFY_URL:-https://coolifyone.orizongroup.online}"
+
           MAX_ATTEMPTS=40
           INTERVAL=15
           for i in $(seq 1 ${MAX_ATTEMPTS}); do
             RESPONSE=$(curl -sk -S \
               -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
-              "${BASE}/api/v1/deployments/applications/${APP_UUID}")
+              "${COOLIFY_URL}/api/v1/deployments/applications/${APP_UUID}")
             STATUS=$(echo "${RESPONSE}" | jq -r '.deployments[0].status // "unknown"')
             echo "[${i}/${MAX_ATTEMPTS}] status=${STATUS}"
             case "${STATUS}" in

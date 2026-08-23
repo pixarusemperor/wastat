@@ -1,8 +1,15 @@
 import type { FastifyInstance } from "fastify";
 import type BetterSqlite3 from "better-sqlite3";
 import { makeWasenderAdmin, upsertSession } from "./wasender-admin.js";
+import type { createEngine } from "./engine.js";
 
 const NODE_TYPES = new Set(["trigger", "keyword", "send_text", "send_media", "delay", "end"]);
+
+export interface ApiRoutesOptions {
+  wasenderPat?: string;
+  fetchImpl?: typeof fetch;
+  engine?: ReturnType<typeof createEngine>;
+}
 
 interface GraphInput {
   name?: unknown;
@@ -66,7 +73,7 @@ function parseGraph(body: unknown): { error: string } | { graph: ParsedGraph } {
 export function registerApiRoutes(
   app: FastifyInstance,
   db: BetterSqlite3.Database,
-  opts?: { wasenderPat?: string; fetchImpl?: typeof fetch },
+  opts?: ApiRoutesOptions,
 ): void {
   const insertWorkflow = db.prepare(
     "INSERT INTO workflows (name, description, active, experiment_id) VALUES (?, ?, ?, ?)",
@@ -138,28 +145,77 @@ export function registerApiRoutes(
   });
 
   app.post("/api/experiments", async (request, reply) => {
-    const b = (request.body ?? {}) as { name?: unknown; description?: unknown };
+    const b = (request.body ?? {}) as { name?: unknown; description?: unknown; active?: unknown };
     if (typeof b.name !== "string" || !b.name.trim()) {
       return reply.code(400).send({ error: "name is required" });
     }
     const info = db
-      .prepare("INSERT INTO experiments (name, description) VALUES (?, ?)")
-      .run(b.name, typeof b.description === "string" ? b.description : null);
+      .prepare("INSERT INTO experiments (name, description, active) VALUES (?, ?, ?)")
+      .run(b.name.trim(), typeof b.description === "string" ? b.description.trim() : null, b.active === false ? 0 : 1);
     return reply.code(201).send({ id: Number(info.lastInsertRowid) });
   });
 
   app.get("/api/experiments", async () => {
-    return db.prepare("SELECT id, name, description, active FROM experiments ORDER BY id").all();
+    return db
+      .prepare(`
+        SELECT e.id, e.name, e.description, e.active,
+               (SELECT COUNT(*) FROM workflows WHERE experiment_id = e.id) AS variantCount,
+               (SELECT COUNT(DISTINCT contact_id) FROM experiment_assignments WHERE experiment_id = e.id) AS totalAssigned
+        FROM experiments e
+        ORDER BY e.id DESC
+      `)
+      .all();
   });
 
-  // PRD §33: reply-rate per variant.
-  app.get<{ Params: { id: string } }>("/api/experiments/:id/stats", async (request, reply) => {
+  app.get<{ Params: { id: string } }>("/api/experiments/:id", async (request, reply) => {
+    const expId = Number(request.params.id);
+    const exp = db
+      .prepare("SELECT id, name, description, active, created_at AS createdAt FROM experiments WHERE id = ?")
+      .get(expId) as Record<string, unknown> | undefined;
+    if (!exp) return reply.code(404).send({ error: "not found" });
+    const workflows = db
+      .prepare("SELECT id, name, description, active FROM workflows WHERE experiment_id = ? ORDER BY id ASC")
+      .all(expId);
+    return { ...exp, workflows };
+  });
+
+  app.put<{ Params: { id: string } }>("/api/experiments/:id", async (request, reply) => {
     const expId = Number(request.params.id);
     const exp = db.prepare("SELECT id FROM experiments WHERE id = ?").get(expId);
     if (!exp) return reply.code(404).send({ error: "not found" });
-    const rows = db
+    const b = (request.body ?? {}) as { name?: unknown; description?: unknown; active?: unknown };
+    if (typeof b.name !== "string" || !b.name.trim()) {
+      return reply.code(400).send({ error: "name is required" });
+    }
+    db.prepare("UPDATE experiments SET name = ?, description = ?, active = ? WHERE id = ?").run(
+      b.name.trim(),
+      typeof b.description === "string" ? b.description.trim() : null,
+      b.active === false ? 0 : 1,
+      expId,
+    );
+    return { ok: true };
+  });
+
+  app.delete<{ Params: { id: string } }>("/api/experiments/:id", async (request, reply) => {
+    const expId = Number(request.params.id);
+    const exp = db.prepare("SELECT id FROM experiments WHERE id = ?").get(expId);
+    if (!exp) return reply.code(404).send({ error: "not found" });
+    db.transaction(() => {
+      db.prepare("UPDATE workflows SET experiment_id = NULL WHERE experiment_id = ?").run(expId);
+      db.prepare("DELETE FROM experiment_assignments WHERE experiment_id = ?").run(expId);
+      db.prepare("DELETE FROM experiments WHERE id = ?").run(expId);
+    })();
+    return { ok: true };
+  });
+
+  // PRD §33: reply-rate per variant and experiment totals.
+  app.get<{ Params: { id: string } }>("/api/experiments/:id/stats", async (request, reply) => {
+    const expId = Number(request.params.id);
+    const exp = db.prepare("SELECT id, name, description, active FROM experiments WHERE id = ?").get(expId) as { id: number; name: string; description: string | null; active: number } | undefined;
+    if (!exp) return reply.code(404).send({ error: "not found" });
+    const variants = db
       .prepare(`
-        SELECT w.id AS workflowId, w.name,
+        SELECT w.id AS workflowId, w.name, w.active,
           (SELECT COUNT(DISTINCT contact_id) FROM experiment_assignments WHERE experiment_id = ? AND workflow_id = w.id) AS assigned,
           (SELECT COUNT(DISTINCT m.contact_id) FROM messages m
              JOIN workflow_executions we ON we.id = m.workflow_execution_id
@@ -169,15 +225,31 @@ export function registerApiRoutes(
               AND EXISTS (SELECT 1 FROM messages o WHERE o.id = r.in_reply_to_id
                           AND o.workflow_execution_id IN (SELECT id FROM workflow_executions WHERE workflow_id = w.id))) AS replied
         FROM workflows w
-        JOIN experiment_assignments ea ON ea.workflow_id = w.id
         WHERE w.experiment_id = ?
-        GROUP BY w.id ORDER BY w.id
+        ORDER BY w.id ASC
       `)
-      .all(expId, expId) as Array<{ workflowId: number; name: string; assigned: number; messaged: number; replied: number }>;
-    return rows.map((r) => ({
+      .all(expId, expId) as Array<{ workflowId: number; name: string; active: number; assigned: number; messaged: number; replied: number }>;
+
+    const variantStats = variants.map((r) => ({
       ...r,
       replyRate: r.assigned > 0 ? Math.round((r.replied / r.assigned) * 1000) / 10 : 0,
     }));
+
+    const totalAssigned = variantStats.reduce((sum, v) => sum + v.assigned, 0);
+    const totalMessaged = variantStats.reduce((sum, v) => sum + v.messaged, 0);
+    const totalReplied = variantStats.reduce((sum, v) => sum + v.replied, 0);
+    const totalReplyRate = totalAssigned > 0 ? Math.round((totalReplied / totalAssigned) * 1000) / 10 : 0;
+
+    return {
+      experiment: exp,
+      totals: {
+        assigned: totalAssigned,
+        messaged: totalMessaged,
+        replied: totalReplied,
+        replyRate: totalReplyRate,
+      },
+      variants: variantStats,
+    };
   });
 
   // PRD §46: inbox — conversations per session, then a thread.
@@ -202,10 +274,88 @@ export function registerApiRoutes(
       if (!contactId) return reply.code(400).send({ error: "contactId is required" });
       return db
         .prepare(`
-          SELECT id, direction, message_type AS messageType, text, status, timestamp
-          FROM messages WHERE session_id = ? AND contact_id = ? ORDER BY id ASC LIMIT 500
+          SELECT
+            m.id,
+            m.direction,
+            m.message_type AS messageType,
+            m.text,
+            m.status,
+            m.timestamp,
+            m.workflow_execution_id AS workflowExecutionId,
+            m.node_key AS nodeKey,
+            m.in_reply_to_id AS inReplyToId,
+            w.name AS workflowName,
+            w.id AS workflowId,
+            e.name AS experimentName,
+            e.id AS experimentId,
+            reply_w.name AS repliedWorkflowName,
+            reply_e.name AS repliedExperimentName
+          FROM messages m
+          LEFT JOIN workflow_executions we ON we.id = m.workflow_execution_id
+          LEFT JOIN workflows w ON w.id = we.workflow_id
+          LEFT JOIN experiments e ON e.id = w.experiment_id
+          LEFT JOIN messages parent_m ON parent_m.id = m.in_reply_to_id
+          LEFT JOIN workflow_executions parent_we ON parent_we.id = parent_m.workflow_execution_id
+          LEFT JOIN workflows reply_w ON reply_w.id = parent_we.workflow_id
+          LEFT JOIN experiments reply_e ON reply_e.id = reply_w.experiment_id
+          WHERE m.session_id = ? AND m.contact_id = ?
+          ORDER BY m.id ASC LIMIT 500
         `)
         .all(Number(sessionId), Number(contactId));
+    },
+  );
+
+  // Workflow Simulator: simulate incoming message from a contact and trigger matching workflow
+  app.post<{ Body: { sessionId?: number; phone?: string; text?: string } }>(
+    "/api/simulate",
+    async (request, reply) => {
+      const sessionId = Number(request.body?.sessionId ?? 1);
+      const phone = typeof request.body?.phone === "string" ? request.body.phone.trim() : "+1234567890";
+      const text = typeof request.body?.text === "string" ? request.body.text.trim() : "";
+
+      if (!text) return reply.code(400).send({ error: "text is required" });
+
+      // Upsert contact
+      db.prepare("INSERT INTO contacts (phone) VALUES (?) ON CONFLICT(phone) DO NOTHING").run(phone);
+      const contact = db.prepare("SELECT id FROM contacts WHERE phone = ?").get(phone) as { id: number };
+
+      // Ensure session exists
+      const session = db.prepare("SELECT id FROM sessions WHERE id = ?").get(sessionId) as { id: number } | undefined;
+      const actualSessionId = session?.id ?? 1;
+
+      // Insert incoming message
+      const info = db
+        .prepare(`
+          INSERT INTO messages (session_id, contact_id, direction, message_type, text, provider_message_id, timestamp)
+          VALUES (?, ?, 'in', 'text', ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        `)
+        .run(actualSessionId, contact.id, text, `sim-${Date.now()}`);
+
+      const messageId = Number(info.lastInsertRowid);
+
+      if (opts?.engine) {
+        opts.engine.attributeReply(messageId);
+        const executionId = opts.engine.handleIncomingMessage(
+          actualSessionId,
+          contact.id,
+          messageId,
+        );
+
+        return reply.code(201).send({
+          ok: true,
+          contactId: contact.id,
+          messageId,
+          matched: executionId !== null,
+          executionId: executionId ?? undefined,
+        });
+      }
+
+      return reply.code(201).send({
+        ok: true,
+        contactId: contact.id,
+        messageId,
+        matched: false,
+      });
     },
   );
 
@@ -215,9 +365,14 @@ export function registerApiRoutes(
     const getLocal = db.prepare("SELECT id FROM sessions WHERE provider_session_id = ?");
 
     /** List remote sessions and mirror them locally — the local table is the
-     * webhook-facing source of truth for api keys and secrets. */
-    async function syncSessions() {
-      for (const s of await admin.listSessions()) upsertSession(db, s);
+     * webhook-facing source of truth for api keys and secrets. Falls back to
+     * local cache if Wasender is unreachable or credentials are mock/expired. */
+    async function syncSessions(log?: FastifyInstance["log"]) {
+      try {
+        for (const s of await admin.listSessions()) upsertSession(db, s);
+      } catch (err) {
+        log?.warn({ err }, "Could not sync remote Wasender sessions; serving local cache");
+      }
       return db
         .prepare(
           "SELECT id, name, provider_session_id AS providerSessionId, status FROM sessions ORDER BY id",
@@ -225,7 +380,7 @@ export function registerApiRoutes(
         .all();
     }
 
-    app.get("/api/sessions", async () => syncSessions());
+    app.get("/api/sessions", async (request) => syncSessions(request.log));
 
     app.post<{ Body: { name?: unknown } }>("/api/sessions", async (request, reply) => {
       const name = typeof request.body?.name === "string" ? request.body.name.trim() : "";
@@ -249,15 +404,107 @@ export function registerApiRoutes(
       }
     });
 
+    app.post<{ Params: { id: string } }>("/api/sessions/:id/connect", async (request, reply) => {
+      const localId = Number(request.params.id);
+      const row = db
+        .prepare("SELECT id, provider_session_id FROM sessions WHERE id = ?")
+        .get(localId) as { id: number; provider_session_id: string } | undefined;
+      if (!row) return reply.code(404).send({ error: "not found" });
+      try {
+        await admin.connectSession(Number(row.provider_session_id));
+        db.prepare("UPDATE sessions SET status = 'connecting' WHERE id = ?").run(localId);
+        return { ok: true, status: "connecting" };
+      } catch (err) {
+        request.log.error(err);
+        return reply.code(502).send({ error: "Wasender connect failed" });
+      }
+    });
+
+    app.get<{ Params: { id: string } }>("/api/sessions/:id/qrcode", async (request, reply) => {
+      const localId = Number(request.params.id);
+      const row = db
+        .prepare("SELECT id, provider_session_id FROM sessions WHERE id = ?")
+        .get(localId) as { id: number; provider_session_id: string } | undefined;
+      if (!row) return reply.code(404).send({ error: "not found" });
+      try {
+        const qrCode = await admin.getQrCode(Number(row.provider_session_id));
+        return { qrCode };
+      } catch (err) {
+        request.log.error(err);
+        return reply.code(502).send({ error: "Could not fetch QR code from Wasender" });
+      }
+    });
+
+    app.get<{ Params: { id: string } }>("/api/sessions/:id/status", async (request, reply) => {
+      const localId = Number(request.params.id);
+      const row = db
+        .prepare("SELECT id, provider_session_id, status FROM sessions WHERE id = ?")
+        .get(localId) as { id: number; provider_session_id: string; status: string } | undefined;
+      if (!row) return reply.code(404).send({ error: "not found" });
+      try {
+        const status = await admin.getStatus(Number(row.provider_session_id));
+        const normalized = String(status).toLowerCase();
+        db.prepare("UPDATE sessions SET status = ? WHERE id = ?").run(normalized, localId);
+        return { status: normalized };
+      } catch (err) {
+        request.log.warn(err);
+        return { status: row.status };
+      }
+    });
+
+    app.post<{ Params: { id: string } }>("/api/sessions/:id/restart", async (request, reply) => {
+      const localId = Number(request.params.id);
+      const row = db
+        .prepare("SELECT id, provider_session_id FROM sessions WHERE id = ?")
+        .get(localId) as { id: number; provider_session_id: string } | undefined;
+      if (!row) return reply.code(404).send({ error: "not found" });
+      try {
+        await admin.restartSession(Number(row.provider_session_id));
+        return { ok: true };
+      } catch (err) {
+        request.log.error(err);
+        return reply.code(502).send({ error: "Wasender restart failed" });
+      }
+    });
+
+    app.post<{ Params: { id: string } }>("/api/sessions/:id/disconnect", async (request, reply) => {
+      const localId = Number(request.params.id);
+      const row = db
+        .prepare("SELECT id, provider_session_id FROM sessions WHERE id = ?")
+        .get(localId) as { id: number; provider_session_id: string } | undefined;
+      if (!row) return reply.code(404).send({ error: "not found" });
+      try {
+        await admin.disconnectSession(Number(row.provider_session_id));
+        db.prepare("UPDATE sessions SET status = 'disconnected' WHERE id = ?").run(localId);
+        return { ok: true };
+      } catch (err) {
+        request.log.error(err);
+        return reply.code(502).send({ error: "Wasender disconnect failed" });
+      }
+    });
+
     app.delete<{ Params: { id: string } }>("/api/sessions/:id", async (request, reply) => {
       const localId = Number(request.params.id);
       const row = db
         .prepare("SELECT id, provider_session_id FROM sessions WHERE id = ?")
         .get(localId) as { id: number; provider_session_id: string } | undefined;
       if (!row) return reply.code(404).send({ error: "not found" });
-      await admin.deleteSession(Number(row.provider_session_id));
+      try {
+        await admin.deleteSession(Number(row.provider_session_id));
+      } catch (err) {
+        request.log.warn({ err }, "Wasender remote delete failed or session missing");
+      }
       db.prepare("DELETE FROM sessions WHERE id = ?").run(localId);
       return { ok: true };
+    });
+  } else {
+    // Read-only local session listing when no PAT is provided
+    app.get("/api/sessions", async () => {
+      return db
+        .prepare(
+          "SELECT id, name, provider_session_id AS providerSessionId, status FROM sessions ORDER BY id",
+        )
+        .all();
     });
   }
 }

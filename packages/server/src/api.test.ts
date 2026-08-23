@@ -120,8 +120,8 @@ describe("workflow CRUD API", () => {
     expect(db.prepare("SELECT COUNT(*) AS n FROM workflow_edges").get()).toEqual({ n: 0 });
   });
 
-  it("creates and lists experiments", async () => {
-    const { app } = await setup();
+  it("creates, reads, updates, stats, and deletes experiments", async () => {
+    const { db, app } = await setup();
 
     const created = await app.inject({
       method: "POST",
@@ -129,10 +129,54 @@ describe("workflow CRUD API", () => {
       payload: { name: "Greeting A/B", description: "hi vs hello" },
     });
     expect(created.statusCode).toBe(201);
+    const expId = created.json().id;
+
+    // Attach a workflow to this experiment
+    const wfRes = await app.inject({
+      method: "POST",
+      url: "/api/workflows",
+      payload: {
+        ...validGraph,
+        name: "Variant A",
+        experimentId: expId,
+      },
+    });
+    expect(wfRes.statusCode).toBe(201);
 
     const list = await app.inject({ method: "GET", url: "/api/experiments" });
     expect(list.json()).toEqual([
-      { id: created.json().id, name: "Greeting A/B", description: "hi vs hello", active: 1 },
+      { id: expId, name: "Greeting A/B", description: "hi vs hello", active: 1, variantCount: 1, totalAssigned: 0 },
     ]);
+
+    const getRes = await app.inject({ method: "GET", url: `/api/experiments/${expId}` });
+    expect(getRes.statusCode).toBe(200);
+    const expDetails = getRes.json();
+    expect(expDetails.name).toBe("Greeting A/B");
+    expect(expDetails.workflows).toHaveLength(1);
+    expect(expDetails.workflows[0].name).toBe("Variant A");
+
+    // Check stats (should show Variant A even with 0 assignments)
+    const statsRes = await app.inject({ method: "GET", url: `/api/experiments/${expId}/stats` });
+    expect(statsRes.statusCode).toBe(200);
+    const stats = statsRes.json();
+    expect(stats.experiment.id).toBe(expId);
+    expect(stats.variants).toHaveLength(1);
+    expect(stats.variants[0].name).toBe("Variant A");
+    expect(stats.totals.assigned).toBe(0);
+
+    // Update experiment
+    const updateRes = await app.inject({
+      method: "PUT",
+      url: `/api/experiments/${expId}`,
+      payload: { name: "Greeting A/B Updated", description: "new desc", active: false },
+    });
+    expect(updateRes.statusCode).toBe(200);
+
+    // Delete experiment unlinks workflow
+    const delRes = await app.inject({ method: "DELETE", url: `/api/experiments/${expId}` });
+    expect(delRes.statusCode).toBe(200);
+
+    const checkWf = db.prepare("SELECT experiment_id FROM workflows WHERE id = ?").get(wfRes.json().id) as { experiment_id: number | null };
+    expect(checkWf.experiment_id).toBeNull();
   });
 });

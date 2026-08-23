@@ -8,9 +8,7 @@
 ---
 
 You are working on a project that deploys to production via GitHub → Coolify.
-Before writing any code, you MUST complete the setup steps below. Deployment
-rules are not optional: an agent previously caused a full production outage by
-ignoring them.
+Before writing any code, you MUST complete the setup steps below.
 
 **Project**: <<<PROJECT NAME>>>
 **GitHub repo**: <<<OWNER/REPO>>>
@@ -19,9 +17,19 @@ ignoring them.
 **Coolify panel**: <<<https://coolify.example.com>>>
 **Playbook repo (read it first)**: https://github.com/pixarusemperor/coolify-deploy-playbook
 
+### Official Documentation References
+- **Coolify Docs**: https://coolify.io/docs
+- **Coolify API Reference**: https://coolify.io/docs/api-reference
+- **Coolify Deployments & Webhooks**: https://coolify.io/docs/knowledge-base/applications/deployments
+- **Coolify Server Auto-Cleanup**: https://coolify.io/docs/knowledge-base/server/automated-cleanup
+- **GitHub Container Registry (GHCR)**: https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry
+- **GitHub Actions Secrets**: https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions
+
+---
+
 ## Step 0 — Install the rules into the project (do this FIRST, before coding)
 
-1. Fetch the playbook:
+1. Fetch the playbook rules:
    ```bash
    curl -sL https://raw.githubusercontent.com/pixarusemperor/coolify-deploy-playbook/main/AGENTS-RULES.md -o /tmp/agents-rules.md
    ```
@@ -34,8 +42,8 @@ ignoring them.
 
 ## Step 1 — Read the env contract
 
-- Read the project's env validation file (`lib/env.ts`, `src/env.ts`,
-  `.env.example`, or equivalent) BEFORE touching any environment variable.
+- Read the project's env validation file (`.env.example`, `lib/env.ts`, `src/env.ts`,
+  or equivalent) BEFORE touching any environment variable.
 - List which variables are REQUIRED in production. A required-but-missing var
   typically causes every request to return 500 while the container reports
   "healthy" (TCP healthchecks cannot see application-level validation failures).
@@ -46,54 +54,40 @@ ignoring them.
 
 - Push every environment variable to Coolify via the API or panel BEFORE
   triggering the first deployment.
-- NEVER set env vars after the first deploy: Coolify treats env changes as
-  build-config changes and triggers a FULL Docker rebuild. On a
-  disk-constrained VPS this has caused cascading outages (disk full → database
-  crash → panel dead).
-- NEXT_PUBLIC_* (or equivalent client-visible) vars must be set as Build
-  Variables too if the Dockerfile reads them as ARGs.
+- Ensure client-visible / build-time variables (e.g. `NEXT_PUBLIC_*`) are set as
+  Build Variables in Coolify if the Dockerfile reads them as ARGs.
 
-## Step 3 — Check resources BEFORE every deploy
+## Step 3 — Persistent Token & Credentials
 
-- Check VPS free disk: `ssh <user>@<VPS_IP> df -h /` (or ask the operator).
-- One Docker build needs ~3GB transient free. If below 3GB: free space first
-  following the safe order in the playbook's `docs/runbooks/vps-recovery.md` §3.
-- NEVER free space with destructive commands. Forbidden on the shared VPS:
-  `docker system prune -af`, `docker volume prune`, removing other apps'
-  images/containers/domains. Volumes hold the Coolify database itself.
+- Reuse the persistent master Coolify token stored in `~/.config/coolify/credentials.env`
+  and configured in GitHub Secrets (`COOLIFY_API_TOKEN`, `COOLIFY_BASE_URL`).
+- See `docs/persistent-token-setup.md` for full token persistence guidance.
 
 ## Step 4 — Deploy through the workflow, one at a time
 
 - Use the proven workflow: copy `templates/deploy.yml` from the playbook into
-  `.github/workflows/deploy.yml`, set the branch name, and set the repo
-  secrets (`COOLIFY_API_TOKEN`, `COOLIFY_APP_UUID`, `COOLIFY_BASE_URL`).
+  `.github/workflows/deploy.yml`, set the branch name, and ensure repo
+  secrets are populated (`COOLIFY_API_TOKEN`, `COOLIFY_APP_UUID`, `COOLIFY_BASE_URL`).
 - The workflow triggers the deploy AND polls until finished/failed, so every
   commit gets a real pass/fail status. Do not bypass it with manual API deploys
   while a workflow run is in progress (the concurrency group enforces one
   deploy at a time — respect it).
-- If a deploy FAILS: stop. Read the build logs (playbook runbook §5 shows how
-  to pull them from the Coolify database). Diagnose. Fix. THEN retry once.
-  Repeated blind retries fill the disk with failed-build cache and make
-  everything worse.
+- If a deploy FAILS: stop. Read the build/deployment logs. Diagnose. Fix. THEN retry once.
 
 ## Step 5 — If production breaks
 
 - Follow `docs/runbooks/vps-recovery.md` from the playbook IN ORDER:
-  disk → coolify-db → panel → app. Do not skip to rebuilds.
-- The panel being down usually means its database container died (often from
-  disk exhaustion). Restarting the DB after freeing disk recovers everything
-  in minutes — no rebuild needed.
+  disk → database container (`coolify-db`) → panel container (`coolify`) → application. Do not skip to rebuilds.
 - Document what happened (facts + timestamps) in the project's
   `docs/DIAGNOSTIC-AND-FIX.md`. Append, never delete.
 
 ## Hard limits (violating these = stop working immediately)
 
-1. Never run destructive Docker commands on shared infrastructure.
-2. Never stop, pause, delete, or reassign domains of apps you did not create
-   in this session.
+1. Never run destructive Docker commands (`docker system prune -af`, `docker volume prune`) on shared infrastructure.
+2. Never stop, pause, delete, or reassign domains of apps you did not create in this session.
 3. Never change repository visibility (public↔private) without asking.
 4. Never push to the deploy branch without green typecheck/lint/tests.
-5. Never log secrets, tokens, or user data.
+5. Never log secrets, tokens, or credentials.
 
 ## Definition of done for any deploy
 

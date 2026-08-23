@@ -1,9 +1,15 @@
 {
-  "base": "https://wassflow.orizongroup.online",
+  "base": "http://localhost:37143",
   "failures": 0,
   "summary": [
     {
       "page": "workflows",
+      "viewport": "desktop",
+      "blank": false,
+      "errors": []
+    },
+    {
+      "page": "experiments",
       "viewport": "desktop",
       "blank": false,
       "errors": []
@@ -22,6 +28,12 @@
     },
     {
       "page": "workflows",
+      "viewport": "mobile",
+      "blank": false,
+      "errors": []
+    },
+    {
+      "page": "experiments",
       "viewport": "mobile",
       "blank": false,
       "errors": []

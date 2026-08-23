@@ -4,6 +4,7 @@ import { Dialog, StatusPill } from "./ui.js";
 
 export function WorkflowList({ onOpen }: { onOpen: (id: string) => void }) {
   const [workflows, setWorkflows] = useState<WorkflowSummary[] | null>(null);
+  const [experiments, setExperiments] = useState<Record<number, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<WorkflowSummary | null>(null);
@@ -11,7 +12,14 @@ export function WorkflowList({ onOpen }: { onOpen: (id: string) => void }) {
   async function refresh() {
     setError(null);
     try {
-      setWorkflows(await api.listWorkflows());
+      const [wfList, expList] = await Promise.all([
+        api.listWorkflows(),
+        api.listExperiments().catch(() => []),
+      ]);
+      setWorkflows(wfList);
+      const expMap: Record<number, string> = {};
+      for (const e of expList) expMap[e.id] = e.name;
+      setExperiments(expMap);
     } catch (e) {
       setError(String(e));
     }
@@ -74,7 +82,14 @@ export function WorkflowList({ onOpen }: { onOpen: (id: string) => void }) {
                   onOpen(String(w.id));
                 }}
               >
-                {w.name}
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <span>{w.name}</span>
+                  {w.experimentId && experiments[w.experimentId] && (
+                    <span className="pill pill-draft" style={{ fontSize: "0.6875rem", padding: "0.125rem 0.5rem" }}>
+                      🧪 {experiments[w.experimentId]}
+                    </span>
+                  )}
+                </div>
                 <StatusPill active={w.active === 1} />
               </a>
               <button
@@ -92,6 +107,7 @@ export function WorkflowList({ onOpen }: { onOpen: (id: string) => void }) {
       {/* Create workflow */}
       <Dialog open={creating} onClose={() => setCreating(false)} labelledBy="create-wf-title">
         <CreateWorkflowForm
+          experiments={experiments}
           onCancel={() => setCreating(false)}
           onCreated={(id) => {
             setCreating(false);
@@ -132,13 +148,16 @@ export function WorkflowList({ onOpen }: { onOpen: (id: string) => void }) {
 }
 
 function CreateWorkflowForm({
+  experiments,
   onCancel,
   onCreated,
 }: {
+  experiments: Record<number, string>;
   onCancel: () => void;
   onCreated: (id: string) => void;
 }) {
   const [name, setName] = useState("");
+  const [experimentId, setExperimentId] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -152,12 +171,14 @@ function CreateWorkflowForm({
     if (!trimmed || busy) return;
     setBusy(true);
     try {
-      const created = await api.createWorkflow(trimmed);
+      const created = await api.createWorkflow(trimmed, experimentId ? Number(experimentId) : null);
       onCreated(String(created.id));
     } finally {
       setBusy(false);
     }
   }
+
+  const expEntries = Object.entries(experiments);
 
   return (
     <form className="modal-body" onSubmit={submit}>
@@ -177,6 +198,26 @@ function CreateWorkflowForm({
         onChange={(e) => setName(e.target.value)}
         required
       />
+      {expEntries.length > 0 && (
+        <>
+          <label className="field-label" htmlFor="wf-exp" style={{ marginTop: "1rem" }}>
+            Assign to Experiment (optional)
+          </label>
+          <select
+            id="wf-exp"
+            className="input"
+            value={experimentId}
+            onChange={(e) => setExperimentId(e.target.value)}
+          >
+            <option value="">None (Standalone)</option>
+            {expEntries.map(([id, expName]) => (
+              <option key={id} value={id}>
+                {expName}
+              </option>
+            ))}
+          </select>
+        </>
+      )}
       <div className="modal-actions">
         <button type="button" className="btn" onClick={onCancel}>
           Cancel

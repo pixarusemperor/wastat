@@ -484,3 +484,247 @@ dialog.modal::backdrop {
 }
 .nav-tab:hover { color: var(--text); }
 .nav-tab-active { color: var(--accent); border-color: var(--accent); }
+
+/* ---- Experiments & A/B Testing Grid ---- */
+.experiments-grid {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 1.25rem;
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .experiments-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.section-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0 0 0.75rem 0;
+}
+
+.experiment-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.experiment-card {
+  padding: 1rem;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  transition: all 150ms ease;
+}
+.experiment-card:hover {
+  border-color: #cbd5e1;
+  transform: translateY(-1px);
+}
+.experiment-card-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  background: #fbfdfc;
+}
+
+.exp-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.exp-card-desc {
+  color: var(--muted);
+  font-size: 0.8125rem;
+  margin: 0.375rem 0 0.75rem;
+  line-height: 1.4;
+}
+
+.exp-card-metrics {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.metric-chip {
+  font-size: 0.75rem;
+  background: var(--surface-sunken);
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+}
+
+.exp-card-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+/* Detail & Stats View */
+.exp-detail-card {
+  padding: 1.5rem;
+}
+
+.exp-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.exp-detail-tag {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.stats-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.75rem;
+}
+
+.kpi-box {
+  background: var(--surface-sunken);
+  padding: 1rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+}
+.kpi-box-highlight {
+  background: var(--accent-soft);
+  border-color: #a7f3d0;
+}
+
+.kpi-label {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.kpi-box-highlight .kpi-label {
+  color: #065f46;
+}
+
+.kpi-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-top: 0.25rem;
+}
+.kpi-box-highlight .kpi-value {
+  color: #047857;
+}
+
+/* Variant table */
+.variants-section {
+  border-top: 1px solid var(--border);
+  padding-top: 1.25rem;
+}
+
+.table-wrapper {
+  overflow-x: auto;
+}
+
+.variant-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.variant-table th {
+  text-align: left;
+  padding: 0.625rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid var(--border);
+}
+.variant-table td {
+  padding: 0.875rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.link-button:hover {
+  text-decoration: underline;
+}
+
+.best-badge {
+  font-size: 0.6875rem;
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+  padding: 0.125rem 0.375rem;
+  border-radius: 4px;
+  margin-left: 0.5rem;
+  font-weight: 600;
+}
+
+.rate-bar-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 120px;
+}
+
+.rate-bar-bg {
+  flex: 1;
+  height: 8px;
+  background: #e2e8f0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.rate-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+  transition: width 300ms ease;
+}
+
+.rate-text {
+  font-weight: 600;
+  font-size: 0.8125rem;
+  min-width: 42px;
+}
+
+/* Toolbar experiment select */
+.toolbar-experiment-select {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  background: var(--surface-sunken);
+  padding: 0.25rem 0.625rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+.input-select-sm {
+  background: transparent;
+  border: none;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text);
+  outline: none;
+  cursor: pointer;
+}
+

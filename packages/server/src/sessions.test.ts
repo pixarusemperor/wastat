@@ -38,6 +38,21 @@ async function setup() {
         data: { id: 112692, name: JSON.parse(init.body).name, status: "disconnected", api_key: "key-b", webhook_secret: "sec-b" },
       }, 201);
     }
+    if (url.endsWith("/connect") && method === "POST") {
+      return jsonResponse({ success: true });
+    }
+    if (url.endsWith("/qrcode") && method === "GET") {
+      return jsonResponse({ success: true, data: { qrCode: "2@fake-qr-code-data" } });
+    }
+    if (url.endsWith("/status") && method === "GET") {
+      return jsonResponse({ success: true, data: { status: "CONNECTED" } });
+    }
+    if (url.endsWith("/restart") && method === "POST") {
+      return jsonResponse({ success: true });
+    }
+    if (url.endsWith("/disconnect") && method === "POST") {
+      return jsonResponse({ success: true });
+    }
     if (/\/api\/whatsapp-sessions\/\d+$/.test(url) && method === "DELETE") {
       return jsonResponse({ success: true });
     }
@@ -86,6 +101,37 @@ describe("sessions management API", () => {
     expect(row).toEqual({ name: "Number Two", provider_session_id: "112692" });
   });
 
+  it("connects, retrieves QR code, checks status, restarts, and disconnects", async () => {
+    const { db, app } = await setup();
+    const listed = (await app.inject({ method: "GET", url: "/api/sessions" })).json();
+    const id = listed[0].id;
+
+    // Connect
+    const connRes = await app.inject({ method: "POST", url: `/api/sessions/${id}/connect` });
+    expect(connRes.statusCode).toBe(200);
+    expect(connRes.json()).toEqual({ ok: true, status: "connecting" });
+
+    // QR Code
+    const qrRes = await app.inject({ method: "GET", url: `/api/sessions/${id}/qrcode` });
+    expect(qrRes.statusCode).toBe(200);
+    expect(qrRes.json()).toEqual({ qrCode: "2@fake-qr-code-data" });
+
+    // Status
+    const statusRes = await app.inject({ method: "GET", url: `/api/sessions/${id}/status` });
+    expect(statusRes.statusCode).toBe(200);
+    expect(statusRes.json()).toEqual({ status: "connected" });
+
+    // Restart
+    const restartRes = await app.inject({ method: "POST", url: `/api/sessions/${id}/restart` });
+    expect(restartRes.statusCode).toBe(200);
+
+    // Disconnect
+    const discRes = await app.inject({ method: "POST", url: `/api/sessions/${id}/disconnect` });
+    expect(discRes.statusCode).toBe(200);
+    const row = db.prepare("SELECT status FROM sessions WHERE id = ?").get(id) as any;
+    expect(row.status).toBe("disconnected");
+  });
+
   it("deletes a session both remotely and locally", async () => {
     const { db, app, calls } = await setup();
     const listed = (await app.inject({ method: "GET", url: "/api/sessions" })).json();
@@ -98,7 +144,9 @@ describe("sessions management API", () => {
 
   it("404s when deleting an unknown local session without calling Wasender", async () => {
     const { app, calls } = await setup();
-    const res = await app.inject({ method: "DELETE", url: "/api/sessions/999" });    expect(res.statusCode).toBe(404);
+
+    const res = await app.inject({ method: "DELETE", url: "/api/sessions/999" });
+    expect(res.statusCode).toBe(404);
     expect(calls.filter((c) => c.method === "DELETE").length).toBe(0);
   });
 });

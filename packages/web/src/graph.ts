@@ -20,6 +20,7 @@ export interface WorkflowGraph {
   name: string;
   description: string | null;
   active: number;
+  experimentId?: number | null;
   nodes: GraphNode[];
   edges: GraphEdge[];
 }
@@ -58,22 +59,21 @@ function depths(nodes: GraphNode[], edges: GraphEdge[]): Map<string, number> {
       queue.push(n.nodeKey);
     }
   }
-  while (queue.length) {
-    const key = queue.shift()!;
-    const d = depth.get(key)!;
+  let head = 0;
+  while (head < queue.length) {
+    const cur = queue[head++];
+    const d = depth.get(cur)!;
     for (const e of edges) {
-      if (e.sourceKey === key && !depth.has(e.targetKey)) {
+      if (e.sourceKey === cur && !depth.has(e.targetKey)) {
         depth.set(e.targetKey, d + 1);
         queue.push(e.targetKey);
       }
     }
   }
-  // cycles / orphans land at max depth + 1 per row so they stay visible
-  let fallback = 0;
-  for (const d of depth.values()) fallback = Math.max(fallback, d);
-  nodes.forEach((n, i) => {
-    if (!depth.has(n.nodeKey)) depth.set(n.nodeKey, fallback + 1 + i);
-  });
+  // Disconnected / loop-isolated nodes get depth 0 so they're visible.
+  for (const n of nodes) {
+    if (!depth.has(n.nodeKey)) depth.set(n.nodeKey, 0);
+  }
   return depth;
 }
 
@@ -101,10 +101,11 @@ export function toFlow(graph: WorkflowGraph): { nodes: FlowNode[]; edges: FlowEd
 
 export function fromFlow(
   flow: { nodes: Array<{ id: string; data: GraphNodeData }>; edges: Array<{ source: string; target: string }> },
-  meta: { name: string; description: string | null; active: number },
-): { name: string; description: string | null; active: number; nodes: GraphNode[]; edges: GraphEdge[] } {
+  meta: { name: string; description: string | null; active: number; experimentId?: number | null },
+): { name: string; description: string | null; active: number; experimentId: number | null; nodes: GraphNode[]; edges: GraphEdge[] } {
   return {
     ...meta,
+    experimentId: meta.experimentId ?? null,
     nodes: flow.nodes.map((n) => n.data.graphNode),
     edges: flow.edges.map((e) => ({ sourceKey: e.source, targetKey: e.target })),
   };

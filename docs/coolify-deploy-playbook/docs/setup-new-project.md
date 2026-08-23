@@ -1,32 +1,45 @@
-# Setup — New Project on Coolify (from scratch)
+# Setup — New Project on Coolify
 
-> The proven, ordered procedure. Every step validated in production
-> (wadeskhybrid, 2026-08-21). Do the steps IN ORDER — reordering is what broke
-> production the first time.
+> The standardized procedure for onboarding and deploying a new application to Coolify via GitHub Actions.
+
+---
+
+## Official Documentation References
+
+- **Coolify API Reference**: [https://coolify.io/docs/api-reference](https://coolify.io/docs/api-reference)
+- **Coolify Application Management**: [https://coolify.io/docs/knowledge-base/applications](https://coolify.io/docs/knowledge-base/applications)
+- **Coolify Deployments & Webhooks**: [https://coolify.io/docs/knowledge-base/applications/deployments](https://coolify.io/docs/knowledge-base/applications/deployments)
+- **GitHub Actions Secrets**: [https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+
+---
 
 ## Prerequisites
 
-- [ ] Public GitHub repo with a working `Dockerfile` at the root
-- [ ] DNS A record: `your-subdomain.example.com → VPS_IP` (TTL 300)
-- [ ] Coolify API token (panel → Settings → API tokens; format `<id>|<hash>`)
+- [ ] GitHub repository with a working `Dockerfile` at the root (or pre-built container image)
+- [ ] DNS A record pointing `<APP_SUBDOMAIN>` to the Coolify server IP (TTL 300)
+- [ ] Coolify Master API Token (see [`persistent-token-setup.md`](./persistent-token-setup.md))
 
-## Step-by-step
+---
 
-### 1. Create the Coolify app via API (no UI needed)
+## Step-by-Step
+
+### 1. Create the Application in Coolify
+
+You can create the application via the Coolify Web UI or via the API:
 
 ```bash
 curl -sk -X POST \
-  -H "Authorization: Bearer $TOKEN" \
+  -H "Authorization: Bearer $COOLIFY_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "project_uuid": "<PROJECT_UUID>",
     "environment_uuid": "<ENV_UUID>",
     "server_uuid": "<SERVER_UUID>",
-    "name": "my-app",
+    "name": "<APP_NAME>",
     "build_pack": "dockerfile",
-    "git_repository": "https://github.com/OWNER/REPO.git",
+    "git_repository": "https://github.com/<OWNER>/<REPO>.git",
     "git_branch": "main",
-    "domains": "https://my-subdomain.example.com",
+    "domains": "https://<APP_DOMAIN>",
     "ports_exposes": "3000",
     "ports_mappings": "3000:3000",
     "base_directory": "/",
@@ -34,71 +47,85 @@ curl -sk -X POST \
     "is_auto_deploy_enabled": true,
     "is_force_https_enabled": true
   }' \
-  "https://coolify.example.com/api/v1/applications/public"
+  "${COOLIFY_BASE_URL}/api/v1/applications/public"
 ```
 
-Gotchas proven the hard way:
-- `domains` MUST include the scheme (`https://...`) or validation fails.
-- ALWAYS set `dockerfile_location` AND `base_directory` in the creation payload;
-  `build_pack: dockerfile` alone leaves `dockerfile_location` null and the build
-  uses the wrong path.
-- Note the returned `uuid` — that's `COOLIFY_APP_UUID`.
+> [!NOTE]
+> - `domains` MUST include the scheme (`https://...`).
+> - Save the returned `uuid` — this is `COOLIFY_APP_UUID`.
 
-### 2. Set ALL env vars NOW (before any deploy!)
+---
 
-One at a time (bulk endpoint rejects unknown fields):
+### 2. Set Environment Variables BEFORE First Deploy
+
+Push required environment variables to Coolify via API or panel:
 
 ```bash
 curl -sk -X POST \
-  -H "Authorization: Bearer $TOKEN" \
+  -H "Authorization: Bearer $COOLIFY_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"key": "VAR_NAME", "value": "value"}' \
-  "https://coolify.example.com/api/v1/applications/$APP_UUID/envs"
+  "${COOLIFY_BASE_URL}/api/v1/applications/$APP_UUID/envs"
 ```
 
-- Multiline values (JSON creds) must be base64-encoded and decoded in an
-  entrypoint script — raw newlines break the Dockerfile ARG injection.
-- Client-visible vars (`NEXT_PUBLIC_*`) also need to exist as Build Variables if
-  the Dockerfile reads them as ARGs.
+- Multiline values (such as JSON certificates/keys) should be base64-encoded and decoded in an entrypoint script.
+- Client-visible variables (e.g. `NEXT_PUBLIC_*`) should also be set as Build Variables if the Dockerfile reads them as build ARGs.
 
-### 3. Set GitHub repo secrets
+---
+
+### 3. Set GitHub Repository Secrets
+
+Configure secrets on the target repository using `gh secret set`:
 
 ```bash
-gh secret set COOLIFY_API_TOKEN --repo OWNER/REPO --body "$TOKEN"
+gh secret set COOLIFY_API_TOKEN --repo OWNER/REPO --body "$COOLIFY_API_TOKEN"
 gh secret set COOLIFY_APP_UUID  --repo OWNER/REPO --body "$APP_UUID"
-gh secret set COOLIFY_BASE_URL  --repo OWNER/REPO --body "https://coolify.example.com"
+gh secret set COOLIFY_BASE_URL  --repo OWNER/REPO --body "$COOLIFY_BASE_URL"
 ```
 
-### 4. Add the deploy workflow
+*(See [`persistent-token-setup.md`](./persistent-token-setup.md) for automated multi-repo syncing.)*
 
-Copy `templates/deploy.yml` into `.github/workflows/deploy.yml`. Edit:
-1. Header comment (project name)
-2. `branches:` → your deploy branch
-The workflow handles trigger + poll + concurrency automatically.
+---
 
-### 5. Install agent rules (before any agent works on this project)
+### 4. Add the GitHub Actions Deploy Workflow
 
-Fetch and embed `AGENTS-RULES.md` from the playbook repo into the project's
-`AGENTS.md`, `CLAUDE.md`, `CONTEXT.md` (create missing ones). See PROMPT.md Step 0.
-
-### 6. First deploy
+Copy `templates/deploy.yml` from the playbook into `.github/workflows/deploy.yml` in the project:
 
 ```bash
-git add .github/workflows/deploy.yml && git commit -m "ci: add coolify deploy workflow" && git push origin main
+mkdir -p .github/workflows
+cp path/to/coolify-deploy-playbook/templates/deploy.yml .github/workflows/deploy.yml
 ```
 
-Watch it end-to-end:
+---
+
+### 5. Install Agent Rules
+
+Embed `AGENTS-RULES.md` into the project's root `AGENTS.md` and `CLAUDE.md`:
 
 ```bash
-gh run watch --exit-status   # green = deployment status reached 'finished'
-curl -sk https://my-subdomain.example.com/ -o /dev/null -w '%{http_code}\n'
+curl -sL https://raw.githubusercontent.com/pixarusemperor/coolify-deploy-playbook/main/AGENTS-RULES.md >> AGENTS.md
 ```
 
-If red: STOP. Read build logs (runbook §5). Diagnose. Fix. Retry ONCE.
+---
 
-## Verification checklist
+### 6. First Deploy & Verification
 
-- [ ] Workflow run finished green (poll completed, not just triggered)
-- [ ] Domain returns expected HTTP code (200/302)
-- [ ] Container logs clean (`docker logs <container>` on the VPS)
-- [ ] Agent rules embedded in AGENTS.md / CLAUDE.md / CONTEXT.md
+```bash
+git add .github/workflows/deploy.yml AGENTS.md && git commit -m "ci: configure coolify deployment" && git push origin main
+```
+
+Watch the workflow run to completion:
+
+```bash
+gh run watch --exit-status
+curl -sk https://<APP_DOMAIN>/ -o /dev/null -w '%{http_code}\n'
+```
+
+---
+
+## Verification Checklist
+
+- [ ] GitHub Actions workflow finished with status `finished` (green checkmark)
+- [ ] Application domain returns expected HTTP status (e.g. 200)
+- [ ] Container logs show no boot/runtime errors
+- [ ] Agent deployment rules embedded in project's context files
