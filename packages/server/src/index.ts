@@ -13,17 +13,32 @@ const getApiKey = db.prepare("SELECT api_key_encrypted FROM sessions WHERE id = 
 
 process.env.STATIC_DIR ||= "/app/public";
 
+import { makeWasenderAdmin, upsertSession } from "./wasender-admin.js";
+
 const app = await buildApp(db, {
   wasenderPat: process.env.WASENDER_PAT,
   sendMessage: process.env.MOCK_SEND
     ? async () => ({ providerMessageId: `mock-${Date.now()}` })
     : async (input) => {
-    const row = getApiKey.get(input.sessionId) as { api_key_encrypted: Buffer | string | null };
+    const row = getApiKey.get(input.sessionId) as { api_key_encrypted: Buffer | string | null } | undefined;
     const apiKey = row?.api_key_encrypted?.toString("utf8");
     if (!apiKey) throw { status: 500, code: "NO_SESSION_KEY" };
       return makeWasenderTransport(db)({ ...input, apiKey });
     },
 });
+
+if (process.env.WASENDER_PAT) {
+  const admin = makeWasenderAdmin(process.env.WASENDER_PAT);
+  admin
+    .listSessions()
+    .then((sessions) => {
+      for (const s of sessions) upsertSession(db, s);
+      app.log.info({ count: sessions.length }, "Synced Wasender sessions to local DB");
+    })
+    .catch((err) => {
+      app.log.warn({ err }, "Could not auto-sync Wasender sessions on boot");
+    });
+}
 
 const port = Number(process.env.PORT ?? 4000);
 

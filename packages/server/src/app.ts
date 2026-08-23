@@ -8,6 +8,7 @@ import { createEngine } from "./engine.js";
 import { registerApiRoutes } from "./api.js";
 import { registerMediaRoutes, type StorageProvider } from "./media.js";
 import { realClock, type Clock } from "./scheduler.js";
+import { makeWasenderAdmin, upsertSession } from "./wasender-admin.js";
 
 export interface AppDeps {
   clock?: Clock;
@@ -29,6 +30,15 @@ export interface AppDeps {
 export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: true });
   const engine = createEngine(db, { clock: deps.clock ?? realClock, sendMessage: deps.sendMessage });
+
+  // Background worker poller for delayed jobs and rate-limited sends (PRD §13, §24)
+  const poller = setInterval(() => {
+    void engine.scheduler.tick();
+  }, 1000);
+
+  app.addHook("onClose", async () => {
+    clearInterval(poller);
+  });
 
   await app.register(cors, { origin: true });
   registerApiRoutes(app, db, { wasenderPat: deps.wasenderPat, fetchImpl: deps.fetchImpl, engine });
