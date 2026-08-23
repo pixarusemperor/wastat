@@ -236,8 +236,14 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
         );
 
         const normP = normalize(p);
-        const normM = normalize(msg.text ?? "");
-        const isWord = normP.length > 0 && normM.split(" ").includes(normP);
+        const cleanMsg = (msg.text ?? "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase()
+          .replace(/[^\p{L}\p{N}\s]/gu, " ")
+          .trim();
+        const words = cleanMsg.split(/\s+/);
+        const isWord = normP.length > 0 && (words.includes(normP) || cleanMsg.includes(normP));
 
         if (matched || isWord) {
           matchedAny = true;
