@@ -166,7 +166,7 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
 
   const getActiveWorkflows = db.prepare("SELECT id FROM workflows WHERE active = 1");
   const getKeywordNodes = db.prepare(
-    "SELECT workflow_id, config FROM workflow_nodes WHERE type = 'keyword'",
+    "SELECT workflow_id, config FROM workflow_nodes WHERE type IN ('keyword', 'trigger')",
   );
 
   /**
@@ -188,17 +188,64 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
     let best: { workflowId: number; score: number; priority: number } | null = null;
     for (const row of getKeywordNodes.all() as Array<{ workflow_id: number; config: string }>) {
       if (!active.has(row.workflow_id)) continue;
-      const config = JSON.parse(row.config) as KeywordMatchConfig & { priority?: number };
-      const { score, matched } = evaluateMatch(config, msg.text ?? "");
-      if (!matched) continue;
-      const priority = config.priority ?? 0;
+      let rawConfig: Record<string, unknown> = {};
+      try {
+        rawConfig = JSON.parse(row.config);
+      } catch {
+        continue;
+      }
+
+      const algorithm: MatchAlgorithm =
+        rawConfig.algorithm === "exact" || rawConfig.mode === "exact"
+          ? "exact"
+          : rawConfig.algorithm === "levenshtein"
+            ? "levenshtein"
+            : "dice";
+
+      const threshold: number =
+        typeof rawConfig.threshold === "number"
+          ? rawConfig.threshold <= 1
+            ? rawConfig.threshold * 100
+            : rawConfig.threshold
+          : 75;
+
+      const priority = typeof rawConfig.priority === "number" ? rawConfig.priority : 0;
+
+      const phrases: string[] = [];
+      if (typeof rawConfig.phrase === "string" && rawConfig.phrase.trim()) {
+        phrases.push(rawConfig.phrase.trim());
+      }
+      if (Array.isArray(rawConfig.keywords)) {
+        for (const kw of rawConfig.keywords) {
+          if (typeof kw === "string" && kw.trim()) phrases.push(kw.trim());
+        }
+      }
+
+      if (phrases.length === 0) continue;
+
+      let highestScore = 0;
+      let matchedAny = false;
+
+      for (const p of phrases) {
+        const { score, matched } = evaluateMatch(
+          { phrase: p, algorithm, threshold },
+          msg.text ?? "",
+        );
+        if (matched) {
+          matchedAny = true;
+          if (score > highestScore) highestScore = score;
+        }
+      }
+
+      if (!matchedAny) continue;
+
       if (
         !best ||
-        score > best.score ||
-        (score === best.score && priority > best.priority) ||
-        (score === best.score && priority === best.priority && row.workflow_id < best.workflowId)
+        highestScore > best.score ||
+        (highestScore === best.score && priority > best.priority) ||
+        (highestScore === best.score && priority === best.priority && row.workflow_id < best.workflowId)
       ) {
-        best = { workflowId: row.workflow_id, score, priority };
+        best = { workflowId: row.workflow_id, score: highestScore, priority };
       }
     }
     if (!best) return null;
