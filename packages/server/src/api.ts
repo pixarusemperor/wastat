@@ -320,8 +320,19 @@ export function registerApiRoutes(
       const contact = db.prepare("SELECT id FROM contacts WHERE phone = ?").get(phone) as { id: number };
 
       // Ensure session exists
-      const session = db.prepare("SELECT id FROM sessions WHERE id = ?").get(sessionId) as { id: number } | undefined;
-      const actualSessionId = session?.id ?? 1;
+      const session =
+        (db.prepare("SELECT id FROM sessions WHERE id = ?").get(sessionId) as { id: number } | undefined) ??
+        (db.prepare("SELECT id FROM sessions ORDER BY id ASC LIMIT 1").get() as { id: number } | undefined);
+
+      let actualSessionId = session?.id;
+      if (!actualSessionId) {
+        const ins = db
+          .prepare(
+            "INSERT INTO sessions (name, provider_session_id, status) VALUES ('Default Session', 'default-1', 'connected')",
+          )
+          .run();
+        actualSessionId = Number(ins.lastInsertRowid);
+      }
 
       // Insert incoming message
       const info = db

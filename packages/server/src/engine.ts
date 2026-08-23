@@ -95,18 +95,21 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
           return;
         }
         case "delay": {
-          const config = JSON.parse(node.config) as {
-            mode: "fixed" | "random";
+          const config = (JSON.parse(node.config) ?? {}) as {
+            mode?: "fixed" | "random";
             seconds?: number;
+            delayMs?: number;
             minSeconds?: number;
             maxSeconds?: number;
           };
-          // PRD §13: fixed or random in [min,max]; the picked value is persisted.
-          const seconds =
-            config.mode === "fixed"
-              ? config.seconds!
-              : config.minSeconds! +
-                Math.floor(rng() * (config.maxSeconds! - config.minSeconds! + 1));
+          const isRandom =
+            config.mode === "random" ||
+            (config.minSeconds !== undefined && config.maxSeconds !== undefined);
+          const seconds = isRandom
+            ? (config.minSeconds ?? 3) +
+              Math.floor(rng() * ((config.maxSeconds ?? 10) - (config.minSeconds ?? 3) + 1))
+            : config.seconds ?? (config.delayMs ? Math.max(1, Math.round(config.delayMs / 1000)) : 5);
+
           logDelay.run(executionId, JSON.stringify({ seconds }));
           scheduler.enqueue({
             type: "resume",
