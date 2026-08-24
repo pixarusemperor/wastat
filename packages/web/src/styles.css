@@ -1063,3 +1063,40 @@ dialog.modal::backdrop {
   border-top: 1px solid var(--border);
 }
 
+/* Flow Edge Delete Button & Edge Inspector */
+.flow-edge-delete-btn {
+  width: 22px;
+  height: 22px;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  color: #64748b;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  transition: all 150ms ease;
+  padding: 0;
+}
+
+.flow-edge-delete-btn:hover,
+.flow-edge-delete-btn-active {
+  background: #fee2e2;
+  border-color: #f87171;
+  color: #dc2626;
+  transform: scale(1.2);
+  box-shadow: 0 2px 6px rgba(220, 38, 38, 0.3);
+}
+
+.edge-inspector-card {
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem;
+  margin-top: 0.75rem;
+}
+

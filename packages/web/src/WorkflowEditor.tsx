@@ -1,14 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Background,
+  BaseEdge,
   Controls,
+  EdgeLabelRenderer,
+  getSmoothStepPath,
   Handle,
   Position,
   ReactFlow,
+  reconnectEdge,
   useEdgesState,
   useNodesState,
   type Connection,
   type Edge,
+  type EdgeProps,
   type Node,
   type NodeProps,
 } from "@xyflow/react";
@@ -112,6 +117,68 @@ export function defaultConfig(type: (typeof NODE_TYPES)[number]): Record<string,
     default:
       return {};
   }
+}
+
+/** Custom Removable Edge Component with midpoint delete button */
+export function RemovableEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  style = {},
+  markerEnd,
+  selected,
+}: EdgeProps) {
+  const [edgePath, labelX, labelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+    borderRadius: 12,
+  });
+
+  return (
+    <>
+      <BaseEdge
+        path={edgePath}
+        markerEnd={markerEnd}
+        style={{
+          ...style,
+          stroke: selected ? "var(--accent)" : "#94a3b8",
+          strokeWidth: selected ? 3 : 2,
+          cursor: "pointer",
+        }}
+      />
+      <EdgeLabelRenderer>
+        <div
+          style={{
+            position: "absolute",
+            transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            pointerEvents: "all",
+          }}
+          className="nodrag nopan"
+        >
+          <button
+            type="button"
+            className={`flow-edge-delete-btn ${selected ? "flow-edge-delete-btn-active" : ""}`}
+            onClick={(evt) => {
+              evt.stopPropagation();
+              window.dispatchEvent(new CustomEvent("wastat:delete-edge", { detail: { id } }));
+            }}
+            title="Delete connection (or press Backspace/Delete)"
+            aria-label="Delete connection"
+          >
+            ✕
+          </button>
+        </div>
+      </EdgeLabelRenderer>
+    </>
+  );
 }
 
 /** Custom Node Component for React Flow */
@@ -290,6 +357,11 @@ const nodeTypes = {
   workflow: CustomWorkflowNode,
 };
 
+const edgeTypes = {
+  default: RemovableEdge,
+  removable: RemovableEdge,
+};
+
 export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<GraphNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -301,6 +373,7 @@ export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void 
   });
   const [experiments, setExperiments] = useState<Array<{ id: number; name: string }>>([]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
   const [showSimulator, setShowSimulator] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -326,24 +399,58 @@ export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void 
     toastTimer.current = setTimeout(() => setToast(null), 2500);
   }
 
+  const deleteEdge = useCallback(
+    (edgeId: string) => {
+      setEdges((eds) => eds.filter((e) => e.id !== edgeId));
+      if (selectedEdgeId === edgeId) setSelectedEdgeId(null);
+      showToast("Connection deleted");
+    },
+    [selectedEdgeId, setEdges],
+  );
+
+  useEffect(() => {
+    function handleCustomDelete(e: Event) {
+      const detail = (e as CustomEvent<{ id: string }>).detail;
+      if (detail?.id) deleteEdge(detail.id);
+    }
+    window.addEventListener("wastat:delete-edge", handleCustomDelete);
+    return () => window.removeEventListener("wastat:delete-edge", handleCustomDelete);
+  }, [deleteEdge]);
+
   const onConnect = useCallback(
     (connection: Connection) => {
+      if (!connection.source || !connection.target) return;
+      if (connection.source === connection.target) {
+        showToast("Cannot connect a step to itself", true);
+        return;
+      }
       setEdges((eds) => {
         const edgeId = `${connection.source}${connection.sourceHandle ? `[${connection.sourceHandle}]` : ""}->${connection.target}`;
-        if (eds.some((e) => e.source === connection.source && e.target === connection.target && e.sourceHandle === connection.sourceHandle)) {
-          return eds;
-        }
+        // Replace existing connection from the same source & handle
+        const filtered = eds.filter(
+          (e) => !(e.source === connection.source && (e.sourceHandle ?? null) === (connection.sourceHandle ?? null)),
+        );
         return [
-          ...eds,
+          ...filtered,
           {
             id: edgeId,
             source: connection.source,
             target: connection.target,
             sourceHandle: connection.sourceHandle ?? null,
             targetHandle: connection.targetHandle ?? null,
+            type: "removable",
           },
         ];
       });
+      showToast("Step connected");
+    },
+    [setEdges],
+  );
+
+  const onReconnect = useCallback(
+    (oldEdge: Edge, newConnection: Connection) => {
+      setEdges((els) => reconnectEdge(oldEdge, newConnection, els));
+      showToast("Connection updated");
     },
     [setEdges],
   );
@@ -361,6 +468,7 @@ export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void 
       },
     ]);
     setSelectedKey(key);
+    setSelectedEdgeId(null);
   }
 
   function updateSelected(patch: Partial<GraphNode>) {
@@ -401,7 +509,8 @@ export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void 
     }
   }
 
-  const selected = nodes.find((n) => n.id === selectedKey)?.data.graphNode as GraphNode | undefined;
+  const selectedNode = nodes.find((n) => n.id === selectedKey)?.data.graphNode as GraphNode | undefined;
+  const selectedEdge = edges.find((e) => e.id === selectedEdgeId);
 
   return (
     <div className="editor">
@@ -475,10 +584,24 @@ export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void 
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
-            onNodeClick={(_, n) => setSelectedKey(n.id)}
+            onReconnect={onReconnect}
+            deleteKeyCode={["Backspace", "Delete"]}
+            onNodeClick={(_, n) => {
+              setSelectedKey(n.id);
+              setSelectedEdgeId(null);
+            }}
+            onEdgeClick={(_, e) => {
+              setSelectedEdgeId(e.id);
+              setSelectedKey(null);
+            }}
+            onPaneClick={() => {
+              setSelectedKey(null);
+              setSelectedEdgeId(null);
+            }}
             fitView
           >
             <Background />
@@ -506,14 +629,44 @@ export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void 
 
           <hr style={{ margin: "1rem 0", borderColor: "var(--border)" }} />
 
-          {selected ? (
+          {selectedEdge ? (
+            <div className="config-section">
+              <p className="panel-title">Connection Details</p>
+              <div className="edge-inspector-card">
+                <div style={{ fontSize: "0.85rem", marginBottom: 8 }}>
+                  <div>
+                    <span style={{ color: "var(--muted)" }}>From:</span> <b>{selectedEdge.source}</b>
+                    {selectedEdge.sourceHandle && (
+                      <span className="pill" style={{ marginLeft: 4, fontSize: "0.7rem" }}>
+                        Handle: {selectedEdge.sourceHandle}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ marginTop: 4 }}>
+                    <span style={{ color: "var(--muted)" }}>To:</span> <b>{selectedEdge.target}</b>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-danger btn-sm"
+                  style={{ width: "100%", marginTop: 8 }}
+                  onClick={() => deleteEdge(selectedEdge.id)}
+                >
+                  🗑️ Delete Connection
+                </button>
+              </div>
+            </div>
+          ) : selectedNode ? (
             <NodeConfig
-              node={selected}
+              node={selectedNode}
+              allNodes={nodes.map((n) => n.data.graphNode)}
+              outgoingEdges={edges.filter((e) => e.source === selectedNode.nodeKey)}
+              onDeleteEdge={deleteEdge}
               onChange={updateSelected}
               onDelete={() => {
-                setNodes((ns) => ns.filter((n) => n.id !== selected.nodeKey));
+                setNodes((ns) => ns.filter((n) => n.id !== selectedNode.nodeKey));
                 setEdges((es) =>
-                  es.filter((e) => e.source !== selected.nodeKey && e.target !== selected.nodeKey),
+                  es.filter((e) => e.source !== selectedNode.nodeKey && e.target !== selectedNode.nodeKey),
                 );
                 setSelectedKey(null);
               }}
@@ -521,7 +674,7 @@ export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void 
           ) : (
             <div className="empty-selection-hint">
               <p style={{ color: "var(--muted)", fontSize: "0.85rem", textAlign: "center" }}>
-                Select a step on the canvas to configure variables, branching, or messages.
+                Click any step or connection line on the canvas to configure or delete it.
               </p>
             </div>
           )}
@@ -572,10 +725,16 @@ function VariablePills({ onInsert }: { onInsert: (tag: string) => void }) {
 
 function NodeConfig({
   node,
+  allNodes,
+  outgoingEdges,
+  onDeleteEdge,
   onChange,
   onDelete,
 }: {
   node: GraphNode;
+  allNodes: GraphNode[];
+  outgoingEdges: Edge[];
+  onDeleteEdge: (edgeId: string) => void;
   onChange: (patch: Partial<GraphNode>) => void;
   onDelete: () => void;
 }) {
@@ -597,6 +756,37 @@ function NodeConfig({
           <div className="config-key">Key: {node.nodeKey}</div>
         </div>
       </div>
+
+      {/* Outgoing Connections List & Disconnect Action */}
+      {outgoingEdges.length > 0 && (
+        <div style={{ marginTop: "0.75rem", background: "var(--surface-sunken)", padding: "0.5rem", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)" }}>
+          <span style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--muted)", display: "block", marginBottom: 4 }}>
+            Connected To:
+          </span>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.375rem" }}>
+            {outgoingEdges.map((e) => {
+              const targetNode = allNodes.find((n) => n.nodeKey === e.target);
+              return (
+                <div key={e.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.75rem" }}>
+                  <span>
+                    {e.sourceHandle ? `[${e.sourceHandle}] → ` : "→ "}
+                    <b>{targetNode ? `${targetNode.nodeKey} (${targetNode.type})` : e.target}</b>
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost btn-danger"
+                    style={{ minHeight: "22px", padding: "0 6px", fontSize: "0.75rem" }}
+                    onClick={() => onDeleteEdge(e.id)}
+                    title="Disconnect"
+                  >
+                    Disconnect ✕
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div style={{ marginTop: "0.75rem" }}>
         {(node.type === "keyword" || node.type === "trigger") && (
