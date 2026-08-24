@@ -90,50 +90,93 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Global Navigation */
-.global-nav {
+/* ==========================================================================
+   GLOBAL APP NAVIGATION BAR (App.tsx)
+   ========================================================================== */
+.app-nav {
   height: 56px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 1.25rem;
   position: sticky;
   top: 0;
   z-index: 40;
 }
 
-.nav-links {
+.app-nav-inner {
+  height: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 0 1rem;
   display: flex;
-  gap: 0.5rem;
+  align-items: center;
+  gap: 0.375rem;
+  overflow-x: auto;
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
 }
 
-.nav-item {
+.app-mark {
   display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-main);
+  letter-spacing: -0.02em;
+  margin-right: 1rem;
+  flex-shrink: 0;
+}
+
+.app-mark-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 0.875rem;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.app-tab,
+.nav-tab {
+  display: inline-flex;
   align-items: center;
   gap: 0.375rem;
   padding: 0.375rem 0.75rem;
   border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  text-decoration: none;
+  color: var(--text-muted) !important;
+  text-decoration: none !important;
   font-size: 0.875rem;
   font-weight: 500;
-  transition: all 150ms ease;
+  transition: all 120ms ease;
+  flex-shrink: 0;
 }
 
-.nav-item:hover {
+.app-tab:hover,
+.nav-tab:hover {
   background: var(--surface-sunken);
-  color: var(--text-main);
+  color: var(--text-main) !important;
+  text-decoration: none !important;
 }
 
-.nav-item.active {
-  background: var(--primary-soft);
-  color: var(--primary-text);
+.app-tab.active,
+.nav-tab-active {
+  background: var(--primary-soft) !important;
+  color: var(--primary-text) !important;
   font-weight: 600;
+  text-decoration: none !important;
 }
 
-/* Buttons */
+/* ==========================================================================
+   BUTTONS & CONTROLS
+   ========================================================================== */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -211,7 +254,9 @@ body {
   min-height: 24px;
 }
 
-/* Inputs & Forms */
+/* ==========================================================================
+   INPUTS & FORMS
+   ========================================================================== */
 .input, .textarea {
   width: 100%;
   font-family: inherit;
@@ -230,7 +275,9 @@ body {
   box-shadow: 0 0 0 2px var(--primary-soft);
 }
 
-/* Badges */
+/* ==========================================================================
+   BADGES
+   ========================================================================== */
 .badge {
   display: inline-flex;
   align-items: center;
@@ -272,7 +319,125 @@ body {
   border: 1px solid rgba(99, 102, 241, 0.2);
 }
 
-/* WhatsApp Rich Media Cards */
+/* ==========================================================================
+   INBOX 3-COLUMN RESPONSIVE LAYOUT
+   ========================================================================== */
+.inbox-page-wrapper {
+  height: calc(100vh - 56px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.inbox-header-bar {
+  padding: 0.625rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  min-height: 52px;
+}
+
+.inbox-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 320px 1fr 340px;
+  overflow: hidden;
+}
+
+.inbox-leads-panel {
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  height: 100%;
+}
+
+.inbox-chat-panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-sunken);
+  overflow: hidden;
+  height: 100%;
+  min-width: 0;
+}
+
+.inbox-intel-panel {
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  padding: 1.25rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  height: 100%;
+}
+
+/* Modal slide-over drawer for Mobile & Tablet */
+.inbox-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(2px);
+  z-index: 50;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.inbox-drawer-modal {
+  width: 340px;
+  max-width: 90vw;
+  background: var(--surface);
+  height: 100%;
+  box-shadow: var(--shadow-lg);
+  padding: 1.25rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  animation: slideInRight 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+/* Tablet Breakpoint (1024px) */
+@media (max-width: 1024px) {
+  .inbox-grid {
+    grid-template-columns: 300px 1fr !important;
+  }
+  .inbox-intel-panel-desktop {
+    display: none !important;
+  }
+}
+
+/* Mobile Breakpoint (768px) */
+@media (max-width: 768px) {
+  .inbox-grid {
+    display: flex !important;
+    flex-direction: column !important;
+  }
+  .inbox-leads-panel.hide-on-mobile {
+    display: none !important;
+  }
+  .inbox-chat-panel.hide-on-mobile {
+    display: none !important;
+  }
+}
+
+/* ==========================================================================
+   WHATSAPP MEDIA CARDS & CONTROLS
+   ========================================================================== */
 .media-card-video {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -316,66 +481,6 @@ body {
   background: var(--primary);
   border-radius: 2px;
   opacity: 0.7;
-}
-
-/* React Flow Dual Handles for Workflow Canvas */
-.handle-reply {
-  background-color: var(--primary) !important;
-  width: 12px !important;
-  height: 12px !important;
-  border: 2px solid #ffffff !important;
-  border-radius: 50% !important;
-}
-
-.handle-silence {
-  background-color: var(--warning) !important;
-  width: 12px !important;
-  height: 12px !important;
-  border: 2px solid #ffffff !important;
-  border-radius: 50% !important;
-}
-
-/* Spintax Live Permutation Drawer */
-.spintax-drawer {
-  background: var(--surface);
-  border-left: 1px solid var(--border);
-  box-shadow: var(--shadow-lg);
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 340px;
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  padding: 1rem;
-}
-
-/* Responsive Grid & Drawers */
-@media (max-width: 1024px) {
-  .inbox-desktop-3pane {
-    grid-template-columns: 280px 1fr !important;
-  }
-  .inbox-sidebar-drawer {
-    position: fixed;
-    top: 56px;
-    right: 0;
-    bottom: 0;
-    width: 320px;
-    z-index: 50;
-    box-shadow: -4px 0 12px rgba(0, 0, 0, 0.15);
-  }
-}
-
-@media (max-width: 768px) {
-  .inbox-desktop-3pane {
-    display: flex !important;
-    flex-direction: column !important;
-  }
-  .touch-target {
-    min-height: 48px !important;
-    min-width: 48px !important;
-  }
 }
 
 /* Keyframe animations */

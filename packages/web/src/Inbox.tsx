@@ -195,15 +195,15 @@ const DEMO_LEADS: Array<Conversation & {
 ];
 
 export function InboxPage() {
-  const [conversations, setConversations] = useState<Conversation[] | null>(null);
-  const [selected, setSelected] = useState<Conversation | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>(DEMO_LEADS);
+  const [selected, setSelected] = useState<Conversation | null>(DEMO_LEADS[0]);
+  const [messages, setMessages] = useState<ChatMessage[]>(DEMO_LEADS[0].messages);
   const [simulating, setSimulating] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterPhase, setFilterPhase] = useState<"all" | "objection" | "phase_1" | "phase_2" | "paused">("all");
 
   // Mobile & Tablet responsive layout state
-  const [mobileView, setMobileView] = useState<"list" | "chat">("list");
+  const [mobileView, setMobileView] = useState<"list" | "chat">("chat");
   const [showDrawer, setShowDrawer] = useState(false);
 
   // Customer 360 & Private Notes state
@@ -217,12 +217,21 @@ export function InboxPage() {
     botPausedUntil: string | null;
     attributes: Record<string, { value: string; updatedAt: string }>;
     tags: string[];
-  } | null>(null);
-  const [notes, setNotes] = useState<Array<{ id: number; contactId: number; author: string; body: string; createdAt: string }>>([]);
+  } | null>({
+    id: DEMO_LEADS[0].contactId,
+    phone: DEMO_LEADS[0].phone,
+    name: DEMO_LEADS[0].name,
+    funnelPhase: DEMO_LEADS[0].funnelPhase,
+    botStatus: DEMO_LEADS[0].botStatus,
+    botPausedUntil: null,
+    attributes: DEMO_LEADS[0].attributes,
+    tags: DEMO_LEADS[0].tags,
+  });
+  const [notes, setNotes] = useState<Array<{ id: number; contactId: number; author: string; body: string; createdAt: string }>>(DEMO_LEADS[0].notes);
   const [newNote, setNewNote] = useState("");
   const [manualText, setManualText] = useState("");
   const [sendingManual, setSendingManual] = useState(false);
-  const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
+  const [aiSuggestion, setAiSuggestion] = useState<string | null>(DEMO_LEADS[0].suggestedAiReply ?? null);
 
   // Inline attribute state
   const [attrKey, setAttrKey] = useState("");
@@ -410,20 +419,9 @@ export function InboxPage() {
   });
 
   return (
-    <main className="inbox-page" style={{ height: "calc(100vh - 56px)", display: "flex", flexDirection: "column" }}>
+    <main className="inbox-page-wrapper">
       {/* Top Filter & Command Bar */}
-      <header
-        style={{
-          padding: "0.625rem 1rem",
-          borderBottom: "1px solid var(--border)",
-          background: "var(--surface)",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          flexWrap: "wrap",
-          gap: "0.75rem",
-        }}
-      >
+      <header className="inbox-header-bar">
         <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
           <h1 style={{ fontSize: "1.125rem", margin: 0, fontWeight: 700, display: "flex", alignItems: "center", gap: "0.5rem" }}>
             <MessageSquareIcon style={{ color: "var(--primary)" }} /> Sales Inbox
@@ -467,27 +465,9 @@ export function InboxPage() {
       </header>
 
       {/* 3-Column Responsive Grid */}
-      <div
-        className="inbox-desktop-3pane"
-        style={{
-          flex: 1,
-          display: "grid",
-          gridTemplateColumns: "300px 1fr 320px",
-          overflow: "hidden",
-        }}
-      >
+      <div className="inbox-grid">
         {/* Left Column: Conversations List & Search */}
-        <section
-          style={{
-            borderRight: "1px solid var(--border)",
-            background: "var(--surface)",
-            display: mobileView === "list" ? "flex" : "none",
-            flexDirection: "column",
-            overflow: "hidden",
-            height: "100%",
-          }}
-          className={mobileView === "list" ? "block" : "hidden md:flex"}
-        >
+        <section className={`inbox-leads-panel ${mobileView === "chat" ? "hide-on-mobile" : ""}`}>
           <div style={{ padding: "0.75rem", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: "0.5rem" }}>
             <SearchIcon style={{ color: "var(--text-subtle)", width: 16, height: 16 }} />
             <input
@@ -554,16 +534,7 @@ export function InboxPage() {
         </section>
 
         {/* Center Column: Message Thread & Private Notes */}
-        <section
-          style={{
-            display: mobileView === "chat" ? "flex" : "none",
-            flexDirection: "column",
-            background: "var(--surface-sunken)",
-            overflow: "hidden",
-            height: "100%",
-          }}
-          className={mobileView === "chat" ? "flex" : "hidden md:flex"}
-        >
+        <section className={`inbox-chat-panel ${mobileView === "list" ? "hide-on-mobile" : ""}`}>
           {!selected ? (
             <div style={{ margin: "auto", textAlign: "center", color: "var(--text-muted)" }}>
               <MessageSquareIcon style={{ width: 48, height: 48, strokeWidth: 1.5, margin: "0 auto 0.75rem", opacity: 0.4 }} />
@@ -581,26 +552,28 @@ export function InboxPage() {
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "center",
+                  minHeight: "56px",
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
                   {/* Mobile Back Button */}
                   <button
-                    className="btn btn-xs btn-ghost md:hidden"
+                    className="btn btn-xs btn-ghost"
                     onClick={() => setMobileView("list")}
                     style={{ padding: "4px" }}
+                    title="Back to conversations"
                   >
                     <ArrowLeftIcon />
                   </button>
 
                   <div>
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
                       <strong style={{ fontSize: "0.9375rem" }}>{selected.name || selected.phone}</strong>
                       <span className="badge badge-neutral" style={{ fontSize: "0.6875rem" }}>
                         {selected.phone}
                       </span>
                     </div>
-                    <div style={{ display: "flex", gap: "0.375rem", marginTop: "0.25rem" }}>
+                    <div style={{ display: "flex", gap: "0.375rem", marginTop: "0.25rem", flexWrap: "wrap" }}>
                       <span
                         className={`badge ${contactProfile?.botStatus === "paused_human" ? "badge-warning" : "badge-success"}`}
                       >
@@ -631,8 +604,8 @@ export function InboxPage() {
 
                   {/* Toggle Drawer on Tablet / Mobile */}
                   <button
-                    className="btn btn-xs btn-ghost lg:hidden"
-                    onClick={() => setShowDrawer(!showDrawer)}
+                    className="btn btn-xs btn-ghost"
+                    onClick={() => setShowDrawer(true)}
                     title="Customer 360 Intel"
                   >
                     <UserIcon style={{ width: 14, height: 14 }} /> Intel
@@ -891,143 +864,48 @@ export function InboxPage() {
           )}
         </section>
 
-        {/* Right Column: Customer 360 Intel Drawer */}
-        <aside
-          className={`inbox-sidebar-drawer ${showDrawer ? "block" : "hidden lg:flex"}`}
-          style={{
-            borderLeft: "1px solid var(--border)",
-            background: "var(--surface)",
-            padding: "1rem",
-            overflowY: "auto",
-            display: "flex",
-            flexDirection: "column",
-            gap: "1.25rem",
-            height: "100%",
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ margin: 0, fontSize: "0.875rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.375rem" }}>
-              <UserIcon style={{ width: 14, height: 14 }} /> Customer 360
-            </h3>
-            <span className="badge badge-neutral" style={{ fontSize: "0.625rem" }}>
-              #{selected?.contactId ?? "—"}
-            </span>
-          </div>
-
-          {!selected || !contactProfile ? (
-            <p style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>Select a lead to inspect profile.</p>
-          ) : (
-            <>
-              {/* Funnel Actions Panel */}
-              <div
-                style={{
-                  background: "var(--surface-sunken)",
-                  padding: "0.75rem",
-                  borderRadius: "var(--radius-md)",
-                  border: "1px solid var(--border)",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "0.5rem",
-                }}
-              >
-                <span style={{ fontSize: "0.6875rem", fontWeight: 700, textTransform: "uppercase", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.25rem" }}>
-                  <ZapIcon style={{ width: 12, height: 12, color: "var(--warning)" }} /> Sales Funnel Controls
-                </span>
-
-                <button
-                  className="btn btn-sm btn-primary"
-                  style={{ width: "100%", fontWeight: 600 }}
-                  onClick={handleAdvancePhase}
-                >
-                  <RocketIcon style={{ width: 14, height: 14 }} /> Advance to Phase 2 (Closing)
-                </button>
-
-                <button
-                  className={`btn btn-sm ${contactProfile.botStatus === "paused_human" ? "btn-warning" : "btn-ghost"}`}
-                  style={{ width: "100%", border: "1px solid var(--border)" }}
-                  onClick={toggleBotStatus}
-                >
-                  {contactProfile.botStatus === "paused_human" ? (
-                    <><PlayIcon style={{ width: 12, height: 12 }} /> Resume Automation</>
-                  ) : (
-                    <><PauseIcon style={{ width: 12, height: 12 }} /> Pause Bot (Takeover)</>
-                  )}
-                </button>
-
-                {/* 2-Hour Silence Sweeper Status */}
-                <div style={{ fontSize: "0.6875rem", color: "var(--text-muted)", textAlign: "center", marginTop: "0.25rem", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.25rem" }}>
-                  <ClockIcon style={{ width: 12, height: 12 }} /> 2h Silence Sweeper: <strong style={{ color: "var(--text-main)" }}>01h 48m left</strong>
-                </div>
-              </div>
-
-              {/* Tags Section */}
-              <div>
-                <span style={{ fontSize: "0.6875rem", fontWeight: 700, textTransform: "uppercase", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.25rem" }}>
-                  <TagIcon style={{ width: 12, height: 12 }} /> Lead Tags
-                </span>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem", marginTop: "0.375rem" }}>
-                  {contactProfile.tags.map((t) => (
-                    <span key={t} className="badge badge-neutral" style={{ fontSize: "0.6875rem" }}>
-                      #{t}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              {/* Dynamic Customer Attributes */}
-              <div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.375rem" }}>
-                  <span style={{ fontSize: "0.6875rem", fontWeight: 700, textTransform: "uppercase", color: "var(--text-muted)" }}>
-                    Captured Attributes
-                  </span>
-                  <button
-                    className="btn btn-xs btn-ghost"
-                    onClick={() => setAddingAttr(!addingAttr)}
-                    style={{ fontSize: "0.6875rem" }}
-                  >
-                    {addingAttr ? "Cancel" : "+ Add"}
-                  </button>
-                </div>
-
-                {addingAttr && (
-                  <form onSubmit={handleAddAttribute} style={{ marginBottom: "0.5rem", display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                    <input
-                      className="input"
-                      placeholder="Key (e.g. budget)"
-                      value={attrKey}
-                      onChange={(e) => setAttrKey(e.target.value)}
-                      style={{ fontSize: "0.75rem", padding: "0.25rem 0.5rem" }}
-                      required
-                    />
-                    <input
-                      className="input"
-                      placeholder="Value (e.g. $1M+)"
-                      value={attrVal}
-                      onChange={(e) => setAttrVal(e.target.value)}
-                      style={{ fontSize: "0.75rem", padding: "0.25rem 0.5rem" }}
-                      required
-                    />
-                    <button type="submit" className="btn btn-xs btn-primary">Save</button>
-                  </form>
-                )}
-
-                <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", overflow: "hidden" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", padding: "0.375rem 0.5rem", borderBottom: "1px solid var(--border)", fontSize: "0.8125rem" }}>
-                    <span style={{ color: "var(--text-subtle)" }}>phone</span>
-                    <strong style={{ color: "var(--text-main)" }}>{contactProfile.phone}</strong>
-                  </div>
-                  {Object.entries(contactProfile.attributes).map(([k, v]) => (
-                    <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "0.375rem 0.5rem", borderBottom: "1px solid var(--border)", fontSize: "0.8125rem" }}>
-                      <span style={{ color: "var(--text-subtle)" }}>{k}</span>
-                      <strong style={{ color: "var(--text-main)" }}>{v.value}</strong>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
+        {/* Right Column (Desktop): Customer 360 Intel Panel */}
+        <aside className="inbox-intel-panel inbox-intel-panel-desktop">
+          <CustomerIntelContent
+            selected={selected}
+            contactProfile={contactProfile}
+            handleAdvancePhase={handleAdvancePhase}
+            toggleBotStatus={toggleBotStatus}
+            addingAttr={addingAttr}
+            setAddingAttr={setAddingAttr}
+            attrKey={attrKey}
+            setAttrKey={setAttrKey}
+            attrVal={attrVal}
+            setAttrVal={setAttrVal}
+            handleAddAttribute={handleAddAttribute}
+          />
         </aside>
       </div>
+
+      {/* Modal Drawer Sheet (Tablet / Mobile) */}
+      {showDrawer && (
+        <div className="inbox-drawer-backdrop" onClick={() => setShowDrawer(false)}>
+          <div className="inbox-drawer-modal" onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+              <strong style={{ fontSize: "1rem" }}>Customer 360 Intel</strong>
+              <button className="btn btn-xs btn-ghost" onClick={() => setShowDrawer(false)}>✕ Close</button>
+            </div>
+            <CustomerIntelContent
+              selected={selected}
+              contactProfile={contactProfile}
+              handleAdvancePhase={handleAdvancePhase}
+              toggleBotStatus={toggleBotStatus}
+              addingAttr={addingAttr}
+              setAddingAttr={setAddingAttr}
+              attrKey={attrKey}
+              setAttrKey={setAttrKey}
+              attrVal={attrVal}
+              setAttrVal={setAttrVal}
+              handleAddAttribute={handleAddAttribute}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Simulator Modal */}
       <Dialog open={simulating} onClose={() => setSimulating(false)} labelledBy="sim-modal-title">
@@ -1044,6 +922,156 @@ export function InboxPage() {
         />
       </Dialog>
     </main>
+  );
+}
+
+function CustomerIntelContent({
+  selected,
+  contactProfile,
+  handleAdvancePhase,
+  toggleBotStatus,
+  addingAttr,
+  setAddingAttr,
+  attrKey,
+  setAttrKey,
+  attrVal,
+  setAttrVal,
+  handleAddAttribute,
+}: {
+  selected: Conversation | null;
+  contactProfile: any;
+  handleAdvancePhase: () => Promise<void>;
+  toggleBotStatus: () => Promise<void>;
+  addingAttr: boolean;
+  setAddingAttr: (b: boolean) => void;
+  attrKey: string;
+  setAttrKey: (s: string) => void;
+  attrVal: string;
+  setAttrVal: (s: string) => void;
+  handleAddAttribute: (e: React.FormEvent) => void;
+}) {
+  if (!selected || !contactProfile) {
+    return <p style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>Select a lead to inspect profile.</p>;
+  }
+
+  return (
+    <>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h3 style={{ margin: 0, fontSize: "0.875rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.375rem" }}>
+          <UserIcon style={{ width: 14, height: 14 }} /> Customer 360
+        </h3>
+        <span className="badge badge-neutral" style={{ fontSize: "0.625rem" }}>
+          #{selected.contactId}
+        </span>
+      </div>
+
+      {/* Funnel Actions Panel */}
+      <div
+        style={{
+          background: "var(--surface-sunken)",
+          padding: "0.75rem",
+          borderRadius: "var(--radius-md)",
+          border: "1px solid var(--border)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "0.5rem",
+        }}
+      >
+        <span style={{ fontSize: "0.6875rem", fontWeight: 700, textTransform: "uppercase", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.25rem" }}>
+          <ZapIcon style={{ width: 12, height: 12, color: "var(--warning)" }} /> Sales Funnel Controls
+        </span>
+
+        <button
+          className="btn btn-sm btn-primary"
+          style={{ width: "100%", fontWeight: 600 }}
+          onClick={handleAdvancePhase}
+        >
+          <RocketIcon style={{ width: 14, height: 14 }} /> Advance to Phase 2 (Closing)
+        </button>
+
+        <button
+          className={`btn btn-sm ${contactProfile.botStatus === "paused_human" ? "btn-warning" : "btn-ghost"}`}
+          style={{ width: "100%", border: "1px solid var(--border)" }}
+          onClick={toggleBotStatus}
+        >
+          {contactProfile.botStatus === "paused_human" ? (
+            <><PlayIcon style={{ width: 12, height: 12 }} /> Resume Automation</>
+          ) : (
+            <><PauseIcon style={{ width: 12, height: 12 }} /> Pause Bot (Takeover)</>
+          )}
+        </button>
+
+        {/* 2-Hour Silence Sweeper Status */}
+        <div style={{ fontSize: "0.6875rem", color: "var(--text-muted)", textAlign: "center", marginTop: "0.25rem", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.25rem" }}>
+          <ClockIcon style={{ width: 12, height: 12 }} /> 2h Silence Sweeper: <strong style={{ color: "var(--text-main)" }}>01h 48m left</strong>
+        </div>
+      </div>
+
+      {/* Tags Section */}
+      <div>
+        <span style={{ fontSize: "0.6875rem", fontWeight: 700, textTransform: "uppercase", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.25rem" }}>
+          <TagIcon style={{ width: 12, height: 12 }} /> Lead Tags
+        </span>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem", marginTop: "0.375rem" }}>
+          {(contactProfile.tags || []).map((t: string) => (
+            <span key={t} className="badge badge-neutral" style={{ fontSize: "0.6875rem" }}>
+              #{t}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Dynamic Customer Attributes */}
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.375rem" }}>
+          <span style={{ fontSize: "0.6875rem", fontWeight: 700, textTransform: "uppercase", color: "var(--text-muted)" }}>
+            Captured Attributes
+          </span>
+          <button
+            className="btn btn-xs btn-ghost"
+            onClick={() => setAddingAttr(!addingAttr)}
+            style={{ fontSize: "0.6875rem" }}
+          >
+            {addingAttr ? "Cancel" : "+ Add"}
+          </button>
+        </div>
+
+        {addingAttr && (
+          <form onSubmit={handleAddAttribute} style={{ marginBottom: "0.5rem", display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+            <input
+              className="input"
+              placeholder="Key (e.g. budget)"
+              value={attrKey}
+              onChange={(e) => setAttrKey(e.target.value)}
+              style={{ fontSize: "0.75rem", padding: "0.25rem 0.5rem" }}
+              required
+            />
+            <input
+              className="input"
+              placeholder="Value (e.g. $1M+)"
+              value={attrVal}
+              onChange={(e) => setAttrVal(e.target.value)}
+              style={{ fontSize: "0.75rem", padding: "0.25rem 0.5rem" }}
+              required
+            />
+            <button type="submit" className="btn btn-xs btn-primary">Save</button>
+          </form>
+        )}
+
+        <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", overflow: "hidden" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "0.375rem 0.5rem", borderBottom: "1px solid var(--border)", fontSize: "0.8125rem" }}>
+            <span style={{ color: "var(--text-subtle)" }}>phone</span>
+            <strong style={{ color: "var(--text-main)" }}>{contactProfile.phone}</strong>
+          </div>
+          {Object.entries(contactProfile.attributes || {}).map(([k, v]: [string, any]) => (
+            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "0.375rem 0.5rem", borderBottom: "1px solid var(--border)", fontSize: "0.8125rem" }}>
+              <span style={{ color: "var(--text-subtle)" }}>{k}</span>
+              <strong style={{ color: "var(--text-main)" }}>{v.value}</strong>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
   );
 }
 
