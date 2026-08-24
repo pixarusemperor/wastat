@@ -973,12 +973,10 @@ export async function runSilenceSweepInternal(
     if (edge) {
       db.prepare(`
         UPDATE workflow_executions
-        SET status = 'running',
-            current_node_key = ?,
-            silence_sweep_executed = 1,
+        SET silence_sweep_executed = 1,
             silence_followup_at = NULL
         WHERE id = ?
-      `).run(edge.target_key, exec.id);
+      `).run(exec.id);
 
       db.prepare("INSERT INTO events (event_type, execution_id, data) VALUES ('silence_sweep.triggered', ?, ?)").run(
         exec.id,

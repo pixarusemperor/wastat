@@ -120,6 +120,13 @@ export interface BroadcastSummary {
   scheduledAt: string;
 }
 
+export interface SessionItem {
+  id: number;
+  name: string;
+  providerSessionId: string;
+  status: string;
+}
+
 export const api = {
   listProducts: () => fetch("/api/products").then((r) => json<Product[]>(r)),
   createProduct: (data: {
@@ -199,7 +206,7 @@ export const api = {
 
   listSessions: () =>
     fetch("/api/sessions").then((r) =>
-      json<Array<{ id: number; name: string; providerSessionId: string; status: string }>>(r),
+      json<SessionItem[]>(r),
     ),
   createSession: (name: string) =>
     fetch("/api/sessions", {
@@ -337,4 +344,60 @@ export const api = {
         }>;
       }>(r),
     ),
+  getTestScenarios: () =>
+    fetch("/api/test-lab/scenarios").then((r) =>
+      json<{ scenarios: TestScenario[] }>(r),
+    ),
+  runTestScenario: (payload: {
+    scenarioId: string;
+    mode?: "virtual" | "live";
+    senderSessionId?: number;
+    receiverPhone?: string;
+    messageText?: string;
+  }) =>
+    fetch("/api/test-lab/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).then((r) => json<TestScenarioResult>(r)),
+  runAllTestScenarios: () =>
+    fetch("/api/test-lab/run-all", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    }).then((r) =>
+      json<{
+        total: number;
+        passed: number;
+        failed: number;
+        results: TestScenarioResult[];
+      }>(r),
+    ),
 };
+
+export interface TestScenario {
+  id: string;
+  category: "media" | "logic" | "timing" | "safety" | "dual_instance";
+  name: string;
+  description: string;
+  supportsVirtual: boolean;
+  supportsLive: boolean;
+}
+
+export interface TestScenarioResult {
+  scenarioId: string;
+  name: string;
+  status: "passed" | "failed";
+  mode: "virtual" | "live";
+  executionId?: number;
+  durationMs: number;
+  logs: string[];
+  metrics?: {
+    readDelayMs?: number;
+    presenceType?: string;
+    presenceDurationMs?: number;
+    mediaUrl?: string;
+    mediaMimeType?: string;
+    dispatchedKind?: string;
+  };
+  error?: string;
+}

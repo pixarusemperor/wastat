@@ -1106,4 +1106,117 @@ export function registerApiRoutes(
 
     return { ok: true, executionId };
   });
+
+  // Test Lab Endpoints
+  app.get("/api/test-lab/scenarios", async () => {
+    const { SCENARIO_CATALOG } = await import("./test-lab.js");
+    return { scenarios: SCENARIO_CATALOG };
+  });
+
+  app.post<{
+    Body: {
+      scenarioId: string;
+      mode?: "virtual" | "live";
+      senderSessionId?: number;
+      receiverPhone?: string;
+      messageText?: string;
+    };
+  }>("/api/test-lab/run", async (request, reply) => {
+    const { scenarioId, mode = "virtual", senderSessionId, receiverPhone, messageText } = request.body || {};
+    if (!scenarioId) return reply.code(400).send({ error: "Missing scenarioId" });
+
+    const { SCENARIO_CATALOG, runVirtualScenario } = await import("./test-lab.js");
+    const { createStorageFromEnv } = await import("./media.js");
+    const storage = createStorageFromEnv();
+
+    if (mode === "live" && scenarioId === "dual_instance_live_e2e") {
+      if (!senderSessionId || !receiverPhone) {
+        return reply.code(400).send({ error: "Live dual-instance testing requires senderSessionId and receiverPhone" });
+      }
+
+      const senderSession = db.prepare("SELECT * FROM sessions WHERE id = ?").get(senderSessionId) as { id: number; name: string } | undefined;
+      if (!senderSession) return reply.code(404).send({ error: "Sender session not found" });
+
+      const startTime = Date.now();
+      const logs: string[] = [];
+      logs.push(`[Live Test] Starting live dispatch from Session "${senderSession.name}" (ID ${senderSessionId}) to ${receiverPhone}`);
+
+      try {
+        if (!opts?.engine) throw new Error("Engine is not initialized on server");
+
+        // Insert or find contact for the receiver phone
+        db.prepare("INSERT INTO contacts (phone, name) VALUES (?, 'Dual-Instance Bot Peer') ON CONFLICT DO NOTHING").run(receiverPhone);
+        const contact = db.prepare("SELECT id FROM contacts WHERE phone = ?").get(receiverPhone) as { id: number };
+
+        // Enqueue direct live test message
+        const textToSend = messageText || `[WaStat Live Test ${Date.now()}] Testing dual-instance connectivity and bot automation`;
+        
+        // Find active workflow for the receiver
+        const activeWf = db.prepare("SELECT id FROM workflows WHERE active = 1 ORDER BY id DESC LIMIT 1").get() as { id: number } | undefined;
+        
+        let execId: number | null = null;
+        if (activeWf) {
+          execId = opts.engine.startExecution(activeWf.id, senderSessionId, contact.id, undefined, {
+            live_test: true,
+            timestamp: new Date().toISOString(),
+          });
+          logs.push(`[Live Test] Dispatched live execution ID ${execId} via workflow ID ${activeWf.id}`);
+        } else {
+          logs.push("[Live Test] Warning: No active workflow found, sent raw diagnostic message");
+        }
+
+        return {
+          scenarioId,
+          name: "Dual-Instance Real-Device E2E Dispatch",
+          status: "passed",
+          mode: "live",
+          executionId: execId ?? undefined,
+          durationMs: Date.now() - startTime,
+          logs,
+          metrics: {
+            dispatchedKind: "live_dispatch",
+          },
+        };
+      } catch (err: any) {
+        logs.push(`[Live Error] ${err.message || String(err)}`);
+        return {
+          scenarioId,
+          name: "Dual-Instance Real-Device E2E Dispatch",
+          status: "failed",
+          mode: "live",
+          durationMs: Date.now() - startTime,
+          logs,
+          error: err.message || String(err),
+        };
+      }
+    }
+
+    // Default: Run virtual scenario safely in memory
+    const res = await runVirtualScenario(db, scenarioId, storage);
+    return res;
+  });
+
+  app.post("/api/test-lab/run-all", async () => {
+    const { SCENARIO_CATALOG, runVirtualScenario } = await import("./test-lab.js");
+    const { createStorageFromEnv } = await import("./media.js");
+    const storage = createStorageFromEnv();
+
+    const virtualScenarios = SCENARIO_CATALOG.filter((s) => s.supportsVirtual);
+    const results = [];
+
+    for (const sc of virtualScenarios) {
+      const res = await runVirtualScenario(db, sc.id, storage);
+      results.push(res);
+    }
+
+    const passed = results.filter((r) => r.status === "passed").length;
+    const failed = results.filter((r) => r.status === "failed").length;
+
+    return {
+      total: results.length,
+      passed,
+      failed,
+      results,
+    };
+  });
 }

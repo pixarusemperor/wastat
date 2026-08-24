@@ -24,6 +24,8 @@ npm-debug.log*
 *.sqlite
 *.sqlite3
 *.db
+data/
+packages/server/data/
 
 # OS / editor
 .DS_Store

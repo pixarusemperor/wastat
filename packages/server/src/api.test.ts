@@ -334,4 +334,27 @@ describe("experiment funnel API", () => {
     expect(retryRes.statusCode).toBe(200);
     expect(retryRes.json().ok).toBe(true);
   });
+
+  it("serves test lab scenarios and executes test runner", async () => {
+    const { app } = await setup();
+    const listRes = await app.inject({ method: "GET", url: "/api/test-lab/scenarios" });
+    expect(listRes.statusCode).toBe(200);
+    const scenarios = listRes.json().scenarios;
+    expect(scenarios).toHaveLength(10);
+
+    const runRes = await app.inject({
+      method: "POST",
+      url: "/api/test-lab/run",
+      payload: { scenarioId: "text_spintax_vars", mode: "virtual" },
+    });
+    expect(runRes.statusCode).toBe(200);
+    expect(runRes.json().status).toBe("passed");
+
+    const runAllRes = await app.inject({ method: "POST", url: "/api/test-lab/run-all" });
+    expect(runAllRes.statusCode).toBe(200);
+    const runAllBody = runAllRes.json();
+    expect(runAllBody.total).toBe(9);
+    expect(runAllBody.passed).toBe(9);
+    expect(runAllBody.failed).toBe(0);
+  });
 });

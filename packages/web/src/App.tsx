@@ -7,9 +7,10 @@ import { SessionsPage } from "./Sessions";
 import { ProductsPage } from "./Products";
 import { BroadcastsPage } from "./Broadcasts";
 import { ExecutionsPage } from "./Executions";
+import { TestLab } from "./TestLab";
 
 type Route =
-  | { page: "list" | "inbox" | "sessions" | "products" | "broadcasts" }
+  | { page: "list" | "inbox" | "sessions" | "products" | "broadcasts" | "test-lab" }
   | { page: "executions"; execId?: string | null }
   | { page: "experiments"; expId?: string | null }
   | { page: "editor"; id: string };
@@ -22,6 +23,7 @@ function currentRoute(): Route {
   if (exp) return { page: "experiments", expId: exp[1] ?? null };
   const exec = hash.match(/^#\/executions(?:\/(.+))?$/);
   if (exec) return { page: "executions", execId: exec[1] ?? null };
+  if (hash.startsWith("#/test-lab")) return { page: "test-lab" };
   if (hash.startsWith("#/inbox")) return { page: "inbox" };
   if (hash.startsWith("#/sessions")) return { page: "sessions" };
   if (hash.startsWith("#/products")) return { page: "products" };
@@ -35,6 +37,7 @@ function navigate(hash: string) {
 
 const TABS = [
   { hash: "#/", label: "Workflows", page: "list" },
+  { hash: "#/test-lab", label: "🧪 Test Lab", page: "test-lab" },
   { hash: "#/executions", label: "⚡ Executions", page: "executions" },
   { hash: "#/experiments", label: "A/B Experiments", page: "experiments" },
   { hash: "#/inbox", label: "Inbox", page: "inbox" },
@@ -81,6 +84,7 @@ export default function App() {
         <WorkflowEditor key={route.id} id={route.id} onBack={() => navigate("#/")} />
       )}
       {route.page === "list" && <WorkflowList onOpen={(id) => navigate(`#/workflows/${id}`)} />}
+      {route.page === "test-lab" && <TestLab />}
       {route.page === "executions" && (
         <ExecutionsPage initialExecutionId={route.execId} />
       )}
