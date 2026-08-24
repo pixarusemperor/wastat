@@ -50,14 +50,7 @@ export function makeWasenderAdmin(pat: string, fetchImpl: typeof fetch = fetch) 
       call<{ success: boolean; data?: unknown }>("PUT", `/whatsapp-sessions/${id}`, {
         webhook_url: webhookUrl,
         webhook_enabled: true,
-        webhook_events: webhookEvents ?? [
-          "messages.received",
-          "messages-group.received",
-          "messages.upsert",
-          "messages.update",
-          "session.status",
-          "presence.update",
-        ],
+        ...(webhookEvents ? { webhook_events: webhookEvents } : {}),
       }),
   };
 }
