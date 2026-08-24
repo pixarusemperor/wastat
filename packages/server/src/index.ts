@@ -1,9 +1,13 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildApp } from "./app.js";
 import { makeWasenderTransport, markMessageAsRead, sendPresenceUpdate, openDb } from "./wasender.js";
 
 const dbPath = process.env.DB_PATH ?? "wastat.db";
+try {
+  mkdirSync(dirname(dbPath), { recursive: true });
+} catch {}
 const db = openDb(dbPath);
 db.exec(readFileSync(new URL("./db/schema.sql", import.meta.url), "utf8"));
 

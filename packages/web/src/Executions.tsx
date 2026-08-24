@@ -96,6 +96,24 @@ export function ExecutionsPage({ initialExecutionId }: { initialExecutionId?: st
     }
   }, []);
 
+  const [retrying, setRetrying] = useState(false);
+
+  const handleRetry = async (id: number) => {
+    setRetrying(true);
+    try {
+      const res = await fetch(`/api/executions/${id}/retry`, { method: "POST" });
+      if (res.ok) {
+        await Promise.all([fetchExecutionDetail(id), fetchExecutions(), fetchSummary()]);
+      } else {
+        alert("Failed to retry execution");
+      }
+    } catch (err) {
+      alert(`Error retrying execution: ${err}`);
+    } finally {
+      setRetrying(false);
+    }
+  };
+
   useEffect(() => {
     setLoading(true);
     Promise.all([fetchSummary(), fetchExecutions(), loadDependencies()]).finally(() =>
@@ -558,6 +576,65 @@ export function ExecutionsPage({ initialExecutionId }: { initialExecutionId?: st
                   </div>
                 </div>
 
+                {/* Failure Diagnostic Alert Banner */}
+                {(selectedDetail.status === "failed" ||
+                  selectedDetail.events?.some((e) => e.eventType === "execution.failed" || e.eventType === "job.failed")) && (
+                  <div
+                    style={{
+                      background: "rgba(239, 68, 68, 0.12)",
+                      border: "1px solid rgba(239, 68, 68, 0.4)",
+                      borderRadius: "8px",
+                      padding: "1rem",
+                      marginBottom: "1.5rem",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem" }}>
+                      <div>
+                        <div style={{ color: "#f87171", fontWeight: 700, fontSize: "0.9rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                          <span>🚨 Automation Step Failed</span>
+                        </div>
+                        {(() => {
+                          const failEvt = selectedDetail.events?.find(
+                            (e) => e.eventType === "execution.failed" || e.eventType === "job.failed"
+                          );
+                          const nodeKey = (failEvt?.data as any)?.node_key || selectedDetail.currentNodeKey || "unknown";
+                          const errText = (failEvt?.data as any)?.error || "An unexpected error interrupted this workflow step.";
+                          const stack = (failEvt?.data as any)?.stack;
+                          return (
+                            <div style={{ marginTop: "0.5rem", fontSize: "0.8125rem", color: "#fca5a5" }}>
+                              <div><strong>Failing Step / Node:</strong> <code style={{ background: "#27272a", padding: "0.1rem 0.3rem", borderRadius: "4px" }}>{nodeKey}</code></div>
+                              <div style={{ marginTop: "0.25rem" }}><strong>Error Details:</strong> {errText}</div>
+                              {stack && (
+                                <details style={{ marginTop: "0.5rem", color: "#d1d5db" }}>
+                                  <summary style={{ cursor: "pointer", fontSize: "0.75rem" }}>View Stack Trace</summary>
+                                  <pre style={{ background: "#09090b", padding: "0.5rem", borderRadius: "4px", fontSize: "0.7rem", marginTop: "0.25rem", overflowX: "auto" }}>{stack}</pre>
+                                </details>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                      <button
+                        onClick={() => void handleRetry(selectedDetail.id)}
+                        disabled={retrying}
+                        style={{
+                          background: "#ef4444",
+                          color: "#fff",
+                          border: "none",
+                          borderRadius: "6px",
+                          padding: "0.4rem 0.75rem",
+                          fontSize: "0.75rem",
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {retrying ? "Retrying…" : "🔄 Retry Step"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Inbound Trigger Message Box */}
                 {selectedDetail.triggerText && (
                   <div
@@ -658,6 +735,14 @@ export function ExecutionsPage({ initialExecutionId }: { initialExecutionId?: st
                           icon = "🏁";
                           title = "Workflow Execution Completed";
                           badgeColor = "#10b981";
+                        } else if (evt.eventType === "execution.failed" || evt.eventType === "job.failed") {
+                          icon = "🚨";
+                          title = `Step Failed: ${(evt.data as any)?.node_key || "unknown"}`;
+                          badgeColor = "#ef4444";
+                        } else if (evt.eventType === "execution.retried") {
+                          icon = "🔄";
+                          title = "Execution Retried by Operator";
+                          badgeColor = "#38bdf8";
                         } else if (evt.eventType.includes("suppressed")) {
                           icon = "🛑";
                           title = "Execution Suppressed (Human Takeover)";

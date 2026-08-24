@@ -328,5 +328,10 @@ describe("experiment funnel API", () => {
     const summaryRes = await app.inject({ method: "GET", url: "/api/executions/summary" });
     expect(summaryRes.statusCode).toBe(200);
     expect(summaryRes.json().running).toBe(1);
+
+    // Test retry execution
+    const retryRes = await app.inject({ method: "POST", url: `/api/executions/${execId}/retry` });
+    expect(retryRes.statusCode).toBe(200);
+    expect(retryRes.json().ok).toBe(true);
   });
 });

@@ -269,304 +269,188 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
       vars = JSON.parse(exec.vars || "{}");
     } catch {}
 
-    while (true) {
-      if (!exec.current_node_key) return complete(executionId, null);
-      const node = getNode.get(exec.workflow_id, exec.current_node_key) as
-        | { type: string; config: string }
-        | undefined;
-      if (!node) return complete(executionId, exec.current_node_key);
+    try {
+      while (true) {
+        if (!exec.current_node_key) return complete(executionId, null);
+        const node = getNode.get(exec.workflow_id, exec.current_node_key) as
+          | { type: string; config: string }
+          | undefined;
+        if (!node) return complete(executionId, exec.current_node_key);
 
-      db.prepare(`
-        INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
-        VALUES ('node.entered', ?, ?, ?, ?)
-      `).run(exec.session_id, exec.contact_id, executionId, JSON.stringify({ node_key: exec.current_node_key, type: node.type }));
+        db.prepare(`
+          INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
+          VALUES ('node.entered', ?, ?, ?, ?)
+        `).run(exec.session_id, exec.contact_id, executionId, JSON.stringify({ node_key: exec.current_node_key, type: node.type }));
 
-      switch (node.type) {
-        case "send_text": {
-          const config = JSON.parse(node.config || "{}") as { text?: string };
-          const interpolated = interpolateVariables(config.text ?? "", vars, contact, session, triggerMsg, rng);
-          enqueueSend(executionId, exec.current_node_key, {
-            kind: "text",
-            text: interpolated,
-          });
-          setWaiting(executionId, exec.current_node_key);
-          return;
-        }
-        case "send_media": {
-          const config = JSON.parse(node.config || "{}") as { text?: string; caption?: string; mediaId?: number };
-          const rawCaption = config.caption ?? config.text;
-          const caption = rawCaption ? interpolateVariables(rawCaption, vars, contact, session, triggerMsg, rng) : undefined;
-          enqueueSend(executionId, exec.current_node_key, {
-            kind: "media",
-            text: caption,
-            mediaId: config.mediaId,
-          });
-          setWaiting(executionId, exec.current_node_key);
-          return;
-        }
-        case "send_menu": {
-          const config = JSON.parse(node.config || "{}") as SendMenuNodeConfig;
-          const bodyText = interpolateVariables(config.bodyText ?? "", vars, contact, session, triggerMsg, rng);
-          const menuText = buildTextMenu(config.header, bodyText, config.options ?? [], config.footer);
-          enqueueSend(executionId, exec.current_node_key, {
-            kind: "text",
-            text: menuText,
-          });
-          setWaitingInput(executionId, exec.current_node_key);
-          return;
-        }
-        case "collect_input": {
-          const config = JSON.parse(node.config || "{}") as CollectInputNodeConfig;
-          const prompt = interpolateVariables(config.promptText ?? "", vars, contact, session, triggerMsg, rng);
-          if (prompt.trim()) {
+        switch (node.type) {
+          case "send_text": {
+            const config = JSON.parse(node.config || "{}") as { text?: string };
+            const interpolated = interpolateVariables(config.text ?? "", vars, contact, session, triggerMsg, rng);
             enqueueSend(executionId, exec.current_node_key, {
               kind: "text",
-              text: prompt,
+              text: interpolated,
             });
+            setWaiting(executionId, exec.current_node_key);
+            return;
           }
-          setWaitingInput(executionId, exec.current_node_key);
-          return;
-        }
-        case "condition": {
-          const config = JSON.parse(node.config || "{}") as ConditionNodeConfig;
-          const triggerText = (getTriggerText.get(executionId) as { text: string | null } | undefined)?.text ?? "";
-          const isTrue = evaluateCondition(config, vars, triggerText, contact);
-
-          db.prepare(`
-            INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
-            VALUES ('condition.evaluated', ?, ?, ?, ?)
-          `).run(exec.session_id, exec.contact_id, executionId, JSON.stringify({ node_key: exec.current_node_key, result: isTrue }));
-
-          const branchHandle = isTrue ? "true" : "false";
-          const edge = getEdgeByHandle.get(exec.workflow_id, exec.current_node_key, branchHandle) as
-            | { target_key: string }
-            | undefined;
-
-          if (edge) {
-            exec.current_node_key = edge.target_key;
-            db.prepare("UPDATE workflow_executions SET current_node_key = ? WHERE id = ?").run(
-              edge.target_key,
-              executionId,
-            );
-            break;
-          } else {
-            const defEdge = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
-            if (defEdge) {
-              exec.current_node_key = defEdge.target_key;
-              break;
+          case "send_media": {
+            const config = JSON.parse(node.config || "{}") as { text?: string; caption?: string; mediaId?: number };
+            const rawCaption = config.caption ?? config.text;
+            const caption = rawCaption ? interpolateVariables(rawCaption, vars, contact, session, triggerMsg, rng) : undefined;
+            enqueueSend(executionId, exec.current_node_key, {
+              kind: "media",
+              text: caption,
+              mediaId: config.mediaId,
+            });
+            setWaiting(executionId, exec.current_node_key);
+            return;
+          }
+          case "send_menu": {
+            const config = JSON.parse(node.config || "{}") as SendMenuNodeConfig;
+            const bodyText = interpolateVariables(config.bodyText ?? "", vars, contact, session, triggerMsg, rng);
+            const menuText = buildTextMenu(config.header, bodyText, config.options ?? [], config.footer);
+            enqueueSend(executionId, exec.current_node_key, {
+              kind: "text",
+              text: menuText,
+            });
+            setWaitingInput(executionId, exec.current_node_key);
+            return;
+          }
+          case "collect_input": {
+            const config = JSON.parse(node.config || "{}") as CollectInputNodeConfig;
+            const prompt = interpolateVariables(config.promptText ?? "", vars, contact, session, triggerMsg, rng);
+            if (prompt.trim()) {
+              enqueueSend(executionId, exec.current_node_key, {
+                kind: "text",
+                text: prompt,
+              });
             }
-            return complete(executionId, exec.current_node_key);
+            setWaitingInput(executionId, exec.current_node_key);
+            return;
           }
-        }
-        case "split_test": {
-          const config = JSON.parse(node.config || "{}") as SplitTestNodeConfig;
-          const variants = config.variants ?? [];
-          if (variants.length === 0) {
+          case "condition": {
+            const config = JSON.parse(node.config || "{}") as ConditionNodeConfig;
+            const triggerText = (getTriggerText.get(executionId) as { text: string | null } | undefined)?.text ?? "";
+            const isTrue = evaluateCondition(config, vars, triggerText, contact);
+
+            db.prepare(`
+              INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
+              VALUES ('condition.evaluated', ?, ?, ?, ?)
+            `).run(exec.session_id, exec.contact_id, executionId, JSON.stringify({ node_key: exec.current_node_key, result: isTrue }));
+
+            const branchHandle = isTrue ? "true" : "false";
+            const edge = getEdgeByHandle.get(exec.workflow_id, exec.current_node_key, branchHandle) as
+              | { target_key: string }
+              | undefined;
+
+            if (edge) {
+              exec.current_node_key = edge.target_key;
+              db.prepare("UPDATE workflow_executions SET current_node_key = ? WHERE id = ?").run(
+                edge.target_key,
+                executionId,
+              );
+              break;
+            } else {
+              const defEdge = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
+              if (defEdge) {
+                exec.current_node_key = defEdge.target_key;
+                break;
+              }
+              return complete(executionId, exec.current_node_key);
+            }
+          }
+          case "milestone": {
+            const config = (JSON.parse(node.config || "{}") ?? {}) as MilestoneNodeConfig;
+            if (config.milestoneKey) {
+              db.prepare(`
+                INSERT INTO funnel_conversions (execution_id, workflow_id, contact_id, milestone_key, value)
+                VALUES (?, ?, ?, ?, ?)
+              `).run(executionId, exec.workflow_id, exec.contact_id, config.milestoneKey, config.value ?? 1);
+              db.prepare(`
+                INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
+                VALUES ('milestone.reached', ?, ?, ?, ?)
+              `).run(exec.session_id, exec.contact_id, executionId, JSON.stringify({ milestone_key: config.milestoneKey, value: config.value ?? 1 }));
+            }
             const next = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
             if (!next) return complete(executionId, exec.current_node_key);
             exec.current_node_key = next.target_key;
             break;
           }
+          case "delay": {
+            const config = (JSON.parse(node.config || "{}") ?? {}) as {
+              mode?: "fixed" | "random";
+              seconds?: number;
+              delayMs?: number;
+              minSeconds?: number;
+              maxSeconds?: number;
+            };
+            const isRandom =
+              config.mode === "random" ||
+              (config.minSeconds !== undefined && config.maxSeconds !== undefined);
+            const seconds = isRandom
+              ? (config.minSeconds ?? 3) +
+                Math.floor(rng() * ((config.maxSeconds ?? 10) - (config.minSeconds ?? 3) + 1))
+              : config.seconds ?? (config.delayMs ? Math.max(1, Math.round(config.delayMs / 1000)) : 5);
 
-          const totalWeight = variants.reduce((sum, v) => sum + (v.weight || 1), 0);
-          let random = rng() * totalWeight;
-          let selected = variants[0];
-          for (const v of variants) {
-            random -= v.weight || 1;
-            if (random <= 0) {
-              selected = v;
-              break;
-            }
+            logDelay.run(executionId, JSON.stringify({ seconds }));
+            scheduler.enqueue({
+              type: "resume",
+              executionId,
+              nodeKey: exec.current_node_key,
+              runAt: new Date(clock.now() + seconds * 1000),
+              payload: { seconds },
+            });
+            setWaiting(executionId, exec.current_node_key);
+            return;
           }
-
-          vars.split_variant = selected.id;
-          updateExecutionVars.run(JSON.stringify(vars), executionId);
-
-          const edge = getEdgeByHandle.get(exec.workflow_id, exec.current_node_key, selected.id) as
-            | { target_key: string }
-            | undefined;
-
-          if (edge) {
-            exec.current_node_key = edge.target_key;
+          case "keyword": {
+            const config = JSON.parse(node.config || "{}") as KeywordMatchConfig;
+            const triggerText = getTriggerText.get(executionId) as { text: string | null } | undefined;
+            const { matched } = evaluateMatch(config, triggerText?.text ?? "");
+            if (!matched) return complete(executionId, exec.current_node_key);
+            const next = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
+            if (!next) return complete(executionId, exec.current_node_key);
+            exec.current_node_key = next.target_key;
             break;
           }
-          const next = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
-          if (!next) return complete(executionId, exec.current_node_key);
-          exec.current_node_key = next.target_key;
-          break;
-        }
-        case "send_poll": {
-          const config = JSON.parse(node.config || "{}") as { question?: string; options?: string[]; multiSelect?: boolean };
-          const question = interpolateVariables(config.question ?? "Please vote:", vars, contact, session, triggerMsg, rng);
-          const pollText = `📊 *${question}*\n\n` + (config.options ?? []).map((o, i) => `${i + 1}. ${o}`).join("\n");
-          enqueueSend(executionId, exec.current_node_key, {
-            kind: "text",
-            text: pollText,
-          });
-          setWaitingInput(executionId, exec.current_node_key);
-          return;
-        }
-        case "send_contact": {
-          const config = JSON.parse(node.config || "{}") as { name?: string; phone?: string };
-          const name = interpolateVariables(config.name ?? "Support Contact", vars, contact, session, triggerMsg, rng);
-          const phone = interpolateVariables(config.phone ?? "", vars, contact, session, triggerMsg, rng);
-          const text = `📇 *Contact Card*\n*Name:* ${name}\n*Phone:* ${phone}`;
-          enqueueSend(executionId, exec.current_node_key, {
-            kind: "text",
-            text,
-          });
-          setWaiting(executionId, exec.current_node_key);
-          return;
-        }
-        case "send_location": {
-          const config = JSON.parse(node.config || "{}") as { latitude?: number; longitude?: number; name?: string; address?: string };
-          const name = config.name ? interpolateVariables(config.name, vars, contact, session, triggerMsg, rng) : "Location";
-          const addr = config.address ? interpolateVariables(config.address, vars, contact, session, triggerMsg, rng) : "";
-          const lat = config.latitude ?? 0;
-          const lng = config.longitude ?? 0;
-          const text = `📍 *${name}*\n${addr ? `${addr}\n` : ""}https://maps.google.com/?q=${lat},${lng}`;
-          enqueueSend(executionId, exec.current_node_key, {
-            kind: "text",
-            text,
-          });
-          setWaiting(executionId, exec.current_node_key);
-          return;
-        }
-        case "send_presence": {
-          const config = JSON.parse(node.config || "{}") as { presenceType?: string; durationSeconds?: number };
-          const sec = config.durationSeconds ?? 2;
-          scheduler.enqueue({
-            type: "send_presence",
-            executionId,
-            nodeKey: exec.current_node_key,
-            runAt: new Date(clock.now()),
-            payload: { presence: config.presenceType ?? "composing", durationMs: sec * 1000 },
-          });
-          scheduler.enqueue({
-            type: "resume",
-            executionId,
-            nodeKey: exec.current_node_key,
-            runAt: new Date(clock.now() + sec * 1000),
-          });
-          setWaiting(executionId, exec.current_node_key);
-          return;
-        }
-        case "mark_read": {
-          scheduler.enqueue({
-            type: "mark_read",
-            executionId,
-            nodeKey: exec.current_node_key,
-            runAt: new Date(clock.now()),
-          });
-          const next = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
-          if (!next) return complete(executionId, exec.current_node_key);
-          exec.current_node_key = next.target_key;
-          break;
-        }
-        case "react_message":
-        case "block_contact":
-        case "unblock_contact":
-        case "add_group_participant":
-        case "remove_group_participant": {
-          const next = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
-          if (!next) return complete(executionId, exec.current_node_key);
-          exec.current_node_key = next.target_key;
-          break;
-        }
-        case "upsert_contact": {
-          const config = (JSON.parse(node.config || "{}") ?? {}) as { name?: string; phone?: string; attributes?: Record<string, string>; tags?: string[] };
-          if (config.name) {
-            db.prepare("UPDATE contacts SET name = ? WHERE id = ?").run(config.name, exec.contact_id);
+          case "trigger":
+          case "trigger_personal":
+          case "trigger_group":
+          case "trigger_reaction":
+          case "trigger_poll_result":
+          case "trigger_call":
+          case "trigger_participant": {
+            const next = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
+            if (!next) return complete(executionId, exec.current_node_key);
+            exec.current_node_key = next.target_key;
+            break;
           }
-          if (config.attributes) {
-            for (const [k, v] of Object.entries(config.attributes)) {
-              db.prepare(`
-                INSERT INTO contact_attributes (contact_id, key, value) VALUES (?, ?, ?)
-                ON CONFLICT(contact_id, key) DO UPDATE SET value = excluded.value, updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-              `).run(exec.contact_id, k, v);
-            }
-          }
-          if (config.tags && Array.isArray(config.tags)) {
-            for (const t of config.tags) {
-              db.prepare("INSERT OR IGNORE INTO contact_tags (contact_id, tag) VALUES (?, ?)").run(exec.contact_id, t);
-            }
-          }
-          const next = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
-          if (!next) return complete(executionId, exec.current_node_key);
-          exec.current_node_key = next.target_key;
-          break;
+          case "end":
+            return complete(executionId, exec.current_node_key);
+          default:
+            return complete(executionId, exec.current_node_key);
         }
-        case "milestone": {
-          const config = (JSON.parse(node.config || "{}") ?? {}) as MilestoneNodeConfig;
-          if (config.milestoneKey) {
-            db.prepare(`
-              INSERT INTO funnel_conversions (execution_id, workflow_id, contact_id, milestone_key, value)
-              VALUES (?, ?, ?, ?, ?)
-            `).run(executionId, exec.workflow_id, exec.contact_id, config.milestoneKey, config.value ?? 1);
-            db.prepare(`
-              INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
-              VALUES ('milestone.reached', ?, ?, ?, ?)
-            `).run(exec.session_id, exec.contact_id, executionId, JSON.stringify({ milestone_key: config.milestoneKey, value: config.value ?? 1 }));
-          }
-          const next = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
-          if (!next) return complete(executionId, exec.current_node_key);
-          exec.current_node_key = next.target_key;
-          break;
-        }
-        case "delay": {
-          const config = (JSON.parse(node.config || "{}") ?? {}) as {
-            mode?: "fixed" | "random";
-            seconds?: number;
-            delayMs?: number;
-            minSeconds?: number;
-            maxSeconds?: number;
-          };
-          const isRandom =
-            config.mode === "random" ||
-            (config.minSeconds !== undefined && config.maxSeconds !== undefined);
-          const seconds = isRandom
-            ? (config.minSeconds ?? 3) +
-              Math.floor(rng() * ((config.maxSeconds ?? 10) - (config.minSeconds ?? 3) + 1))
-            : config.seconds ?? (config.delayMs ? Math.max(1, Math.round(config.delayMs / 1000)) : 5);
-
-          logDelay.run(executionId, JSON.stringify({ seconds }));
-          scheduler.enqueue({
-            type: "resume",
-            executionId,
-            nodeKey: exec.current_node_key,
-            runAt: new Date(clock.now() + seconds * 1000),
-            payload: { seconds },
-          });
-          setWaiting(executionId, exec.current_node_key);
-          return;
-        }
-        case "keyword": {
-          const config = JSON.parse(node.config || "{}") as KeywordMatchConfig;
-          const triggerText = getTriggerText.get(executionId) as { text: string | null } | undefined;
-          const { matched } = evaluateMatch(config, triggerText?.text ?? "");
-          if (!matched) return complete(executionId, exec.current_node_key);
-          const next = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
-          if (!next) return complete(executionId, exec.current_node_key);
-          exec.current_node_key = next.target_key;
-          break;
-        }
-        case "trigger":
-        case "trigger_personal":
-        case "trigger_group":
-        case "trigger_reaction":
-        case "trigger_poll_result":
-        case "trigger_call":
-        case "trigger_participant": {
-          const next = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
-          if (!next) return complete(executionId, exec.current_node_key);
-          exec.current_node_key = next.target_key;
-          break;
-        }
-        case "end":
-          return complete(executionId, exec.current_node_key);
-        default:
-          return complete(executionId, exec.current_node_key);
       }
+    } catch (err: any) {
+      const errMsg = err?.message || (typeof err === "object" ? JSON.stringify(err) : String(err));
+      const errStack = err?.stack || "";
+      db.prepare("UPDATE workflow_executions SET status = 'failed', finished_at = ? WHERE id = ?").run(
+        iso(clock.now()),
+        executionId,
+      );
+      db.prepare(`
+        INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
+        VALUES ('execution.failed', ?, ?, ?, ?)
+      `).run(
+        exec.session_id,
+        exec.contact_id,
+        executionId,
+        JSON.stringify({
+          node_key: exec.current_node_key,
+          error: errMsg,
+          stack: errStack,
+        }),
+      );
     }
   }
 
@@ -908,92 +792,116 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
       const contact = getContactWithAttributes(exec.contact_id);
       if (!contact || !contact.phone) return;
 
-      if (job.type === "mark_read") {
-        const triggerMsg = exec.trigger_message_id
-          ? (db.prepare("SELECT id, provider_message_id FROM messages WHERE id = ?").get(exec.trigger_message_id) as { id: number; provider_message_id: string } | undefined)
-          : undefined;
-        if (triggerMsg?.id) {
-          db.prepare("UPDATE messages SET status = 'read' WHERE id = ?").run(triggerMsg.id);
+      try {
+        if (job.type === "mark_read") {
+          const triggerMsg = exec.trigger_message_id
+            ? (db.prepare("SELECT id, provider_message_id FROM messages WHERE id = ?").get(exec.trigger_message_id) as { id: number; provider_message_id: string } | undefined)
+            : undefined;
+          if (triggerMsg?.id) {
+            db.prepare("UPDATE messages SET status = 'read' WHERE id = ?").run(triggerMsg.id);
+          }
+          if (deps.markMessageAsRead) {
+            await deps.markMessageAsRead({
+              sessionId: exec.session_id,
+              toPhone: contact.phone,
+              key: { id: triggerMsg?.provider_message_id ?? `msg-${Date.now()}`, remoteJid: contact.phone },
+            }).catch(() => {});
+          }
+          db.prepare(`
+            INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
+            VALUES ('read_receipt.sent', ?, ?, ?, '{}')
+          `).run(exec.session_id, exec.contact_id, job.execution_id);
+          return;
         }
-        if (deps.markMessageAsRead) {
-          await deps.markMessageAsRead({
-            sessionId: exec.session_id,
-            toPhone: contact.phone,
-            key: { id: triggerMsg?.provider_message_id ?? `msg-${Date.now()}`, remoteJid: contact.phone },
-          }).catch(() => {});
+
+        if (job.type === "send_presence") {
+          const payload = JSON.parse(job.payload || "{}") as { presence?: "composing" | "recording"; durationMs?: number };
+          if (deps.sendPresenceUpdate) {
+            await deps.sendPresenceUpdate({
+              sessionId: exec.session_id,
+              toPhone: contact.phone,
+              type: payload.presence ?? "composing",
+            }).catch(() => {});
+          }
+          db.prepare(`
+            INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
+            VALUES ('presence.sent', ?, ?, ?, ?)
+          `).run(exec.session_id, exec.contact_id, job.execution_id, JSON.stringify({ presence: payload.presence ?? "composing" }));
+          return;
         }
+
+        if (job.type === "resume") {
+          db.prepare("UPDATE workflow_executions SET status = 'running' WHERE id = ?").run(job.execution_id);
+          db.prepare(`
+            INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
+            VALUES ('workflow.step', ?, ?, ?, ?)
+          `).run(exec.session_id, exec.contact_id, job.execution_id, JSON.stringify({ node_key: job.node_key }));
+          if (job.node_key) advanceFrom(job.execution_id, job.node_key);
+          else step(job.execution_id);
+          return;
+        }
+
+        // job.type === "send_message"
+        // Ensure trigger message status is marked read when reply is dispatched
+        if (exec.trigger_message_id) {
+          db.prepare("UPDATE messages SET status = 'read' WHERE id = ? AND status != 'read'").run(exec.trigger_message_id);
+        }
+
+        const payload = JSON.parse(job.payload) as { kind: "text" | "media"; text?: string; mediaId?: number };
+        const result = await deps.sendMessage({
+          sessionId: exec.session_id,
+          toPhone: contact.phone,
+          kind: payload.kind,
+          text: payload.text,
+          mediaId: payload.mediaId,
+        });
+
+        insertMessage.run(
+          exec.session_id,
+          exec.contact_id,
+          payload.kind === "media" ? "media" : "text",
+          payload.text ?? null,
+          result.providerMessageId,
+          job.execution_id,
+          job.node_key,
+          iso(clock.now()),
+        );
+
         db.prepare(`
           INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
-          VALUES ('read_receipt.sent', ?, ?, ?, '{}')
-        `).run(exec.session_id, exec.contact_id, job.execution_id);
-        return;
-      }
+          VALUES ('message.sent', ?, ?, ?, ?)
+        `).run(exec.session_id, exec.contact_id, job.execution_id, JSON.stringify({ kind: payload.kind, provider_message_id: result.providerMessageId, node_key: job.node_key }));
 
-      if (job.type === "send_presence") {
-        const payload = JSON.parse(job.payload || "{}") as { presence?: "composing" | "recording"; durationMs?: number };
-        if (deps.sendPresenceUpdate) {
-          await deps.sendPresenceUpdate({
-            sessionId: exec.session_id,
-            toPhone: contact.phone,
-            type: payload.presence ?? "composing",
-          }).catch(() => {});
+        const currentExec = getExecution.get(job.execution_id) as { status: string } | undefined;
+        if (currentExec && currentExec.status === "waiting_input") {
+          return;
         }
-        db.prepare(`
-          INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
-          VALUES ('presence.sent', ?, ?, ?, ?)
-        `).run(exec.session_id, exec.contact_id, job.execution_id, JSON.stringify({ presence: payload.presence ?? "composing" }));
-        return;
-      }
 
-      if (job.type === "resume") {
         db.prepare("UPDATE workflow_executions SET status = 'running' WHERE id = ?").run(job.execution_id);
+        if (job.node_key) advanceFrom(job.execution_id, job.node_key);
+      } catch (err: any) {
+        const errMsg = err?.message || (typeof err === "object" ? JSON.stringify(err) : String(err));
+        const errStack = err?.stack || "";
+        db.prepare("UPDATE workflow_executions SET status = 'failed', finished_at = ? WHERE id = ?").run(
+          iso(clock.now()),
+          job.execution_id,
+        );
         db.prepare(`
           INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
-          VALUES ('workflow.step', ?, ?, ?, ?)
-        `).run(exec.session_id, exec.contact_id, job.execution_id, JSON.stringify({ node_key: job.node_key }));
-        if (job.node_key) advanceFrom(job.execution_id, job.node_key);
-        else step(job.execution_id);
-        return;
+          VALUES ('job.failed', ?, ?, ?, ?)
+        `).run(
+          exec.session_id,
+          exec.contact_id,
+          job.execution_id,
+          JSON.stringify({
+            job_type: job.type,
+            node_key: job.node_key,
+            error: errMsg,
+            stack: errStack,
+          }),
+        );
+        throw err;
       }
-
-      // job.type === "send_message"
-      // Ensure trigger message status is marked read when reply is dispatched
-      if (exec.trigger_message_id) {
-        db.prepare("UPDATE messages SET status = 'read' WHERE id = ? AND status != 'read'").run(exec.trigger_message_id);
-      }
-
-      const payload = JSON.parse(job.payload) as { kind: "text" | "media"; text?: string; mediaId?: number };
-      const result = await deps.sendMessage({
-        sessionId: exec.session_id,
-        toPhone: contact.phone,
-        kind: payload.kind,
-        text: payload.text,
-        mediaId: payload.mediaId,
-      });
-
-      insertMessage.run(
-        exec.session_id,
-        exec.contact_id,
-        payload.kind === "media" ? "media" : "text",
-        payload.text ?? null,
-        result.providerMessageId,
-        job.execution_id,
-        job.node_key,
-        iso(clock.now()),
-      );
-
-      db.prepare(`
-        INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
-        VALUES ('message.sent', ?, ?, ?, ?)
-      `).run(exec.session_id, exec.contact_id, job.execution_id, JSON.stringify({ kind: payload.kind, provider_message_id: result.providerMessageId, node_key: job.node_key }));
-
-      const currentExec = getExecution.get(job.execution_id) as { status: string } | undefined;
-      if (currentExec && currentExec.status === "waiting_input") {
-        return;
-      }
-
-      db.prepare("UPDATE workflow_executions SET status = 'running' WHERE id = ?").run(job.execution_id);
-      if (job.node_key) advanceFrom(job.execution_id, job.node_key);
     },
     startExecution(
       workflowId: number,

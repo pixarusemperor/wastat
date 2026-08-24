@@ -1084,4 +1084,26 @@ export function registerApiRoutes(
       events,
     };
   });
+
+  app.post<{ Params: { id: string } }>("/api/executions/:id/retry", async (request, reply) => {
+    const executionId = Number(request.params.id);
+    const execution = db.prepare("SELECT * FROM workflow_executions WHERE id = ?").get(executionId) as
+      | { id: number; workflow_id: number; session_id: number; contact_id: number; current_node_key: string | null }
+      | undefined;
+
+    if (!execution) return reply.code(404).send({ error: "Execution not found" });
+
+    // Reset status to running and resume
+    db.prepare("UPDATE workflow_executions SET status = 'running', finished_at = NULL WHERE id = ?").run(executionId);
+    db.prepare(`
+      INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
+      VALUES ('execution.retried', ?, ?, ?, '{}')
+    `).run(execution.session_id, execution.contact_id, executionId);
+
+    if (opts?.engine?.step) {
+      void opts.engine.step(executionId);
+    }
+
+    return { ok: true, executionId };
+  });
 }
