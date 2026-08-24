@@ -1,12 +1,13 @@
 # Coolify Deploy Playbook
 
 > **Single source of truth** for any coding agent that creates, deploys, or
-> manages apps on Coolify via GitHub Actions.
+> manages apps on Coolify via GitHub. Proven in production — every rule here
+> exists because an agent broke a real deployment by violating it.
 >
 > **Canonical URL**: `https://github.com/pixarusemperor/coolify-deploy-playbook`
 >
-> Works across all projects and machines: reference it by URL, clone it, or paste the master
-> prompt (`PROMPT.md`) into any coding agent before it starts work.
+> Works across machines: reference it by URL, clone it, or paste the master
+> prompt (PROMPT.md) into any coding agent before it starts work.
 
 ---
 
@@ -15,34 +16,32 @@
 | File | Purpose |
 |---|---|
 | `PROMPT.md` | **The master prompt** — paste this into a coding agent at session start |
-| `AGENTS-RULES.md` | The universal rules block to embed in `AGENTS.md` / `CLAUDE.md` / `CONTEXT.md` of any project |
-| `templates/deploy.yml` | Parametrized GitHub Actions workflow (trigger + poll + concurrency) |
-| `docs/persistent-token-setup.md` | **One-time token setup** guide (local persistence & repo sync) |
-| `docs/setup-new-project.md` | Step-by-step application onboarding in Coolify |
-| `docs/runbooks/vps-recovery.md` | Step-by-step recovery runbook |
-| `docs/INCIDENT-2026-08-21.md` | Forensic record of past incidents and root-cause analysis |
-
-## Official Documentation References
-
-- **Coolify Docs**: https://coolify.io/docs
-- **Coolify API Reference**: https://coolify.io/docs/api-reference
-- **Coolify Deployments & Webhooks**: https://coolify.io/docs/knowledge-base/applications/deployments
-- **Coolify Server Auto-Cleanup**: https://coolify.io/docs/knowledge-base/server/automated-cleanup
-- **GitHub Container Registry (GHCR)**: https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry
-- **GitHub Actions Secrets**: https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions
+| `AGENTS-RULES.md` | The rules block to embed in AGENTS.md / CLAUDE.md / CONTEXT.md of any project |
+| `templates/deploy.yml` | Proven GitHub Actions workflow (trigger + poll + concurrency) |
+| `docs/guides/production-monorepo-deployment.md` | **Full-Stack Monorepo Guide** (Multi-stage Docker, Fastify + React, Cloudflare SSL) |
+| `docs/setup-new-project.md` | Step-by-step app creation & secrets provisioning |
+| `docs/runbooks/vps-recovery.md` | Step-by-step recovery when the panel/app goes down |
+| `docs/INCIDENT-2026-08-21.md` | The full forensic record this playbook was learned from |
 
 ## The 30-second version
 
-1. Read the project's env contract (`.env.example`, `lib/env.ts`, `src/env.ts`) BEFORE touching env vars.
-2. Push all required environment variables to Coolify BEFORE triggering deployments.
-3. Configure persistent Coolify token once (`docs/persistent-token-setup.md`) — no per-session token churn.
-4. One deploy at a time; poll status until `finished`.
-5. NEVER run destructive `docker system prune -af` or `docker volume prune` on shared servers.
-6. Panel down? Follow the recovery runbook IN ORDER: disk → `coolify-db` → `coolify` → app.
+1. Agent reads `lib/env.ts` (or the project's env contract) BEFORE touching env vars
+2. ALL env vars go to Coolify BEFORE the first deploy (post-deploy edits = full rebuild)
+3. Check VPS disk (`df -h /`) — builds need ~3GB free; below that, free space first
+4. One deploy at a time; poll status; read build logs on failure
+5. NEVER: `docker system prune -af` / `docker volume prune` / touching other apps' domains or containers
+6. Panel down? Follow the recovery runbook IN ORDER — do not rebuild blindly
+
+Full details: `AGENTS-RULES.md`.
 
 ## How to use with a new project
 
-1. Copy `PROMPT.md` content and give it to your coding agent (with project specifics filled in).
-2. Copy `AGENTS-RULES.md` content into the project's `AGENTS.md` and `CLAUDE.md`.
-3. Copy `templates/deploy.yml` into `.github/workflows/deploy.yml` and set the deploy branch.
-4. Follow `docs/setup-new-project.md` for Coolify app creation and secrets sync.
+1. Copy `PROMPT.md` content and give it to your coding agent (with your project's specifics filled in).
+2. Copy `AGENTS-RULES.md` content into the project's `AGENTS.md` AND `CLAUDE.md` (and `CONTEXT.md` if it exists) — agents only follow rules they can see in their context files.
+3. Copy `templates/deploy.yml` into `.github/workflows/deploy.yml` and fill in the branch name.
+4. Follow `docs/setup-new-project.md` for the Coolify app creation + secrets steps.
+5. For TypeScript monorepos, follow `docs/guides/production-monorepo-deployment.md`.
+
+---
+
+*Proven on: Coolify v4.1.2 · GCE Ubuntu 24.04 VPS · GitHub Actions · Next.js Dockerfile apps & Full-Stack TypeScript Monorepos (WaStat V2)*
