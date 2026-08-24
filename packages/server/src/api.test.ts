@@ -245,4 +245,88 @@ describe("experiment funnel API", () => {
       expect(stages[key]).toEqual({ reached: 0, converted: 0 });
     }
   });
+
+  it("duplicates a workflow, preserves nodes/edges, and creates copy", async () => {
+    const { db, app } = await setup();
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/workflows",
+      payload: {
+        ...validGraph,
+        name: "Welcome Flow",
+      },
+    });
+    const origId = created.json().id;
+
+    const dupRes = await app.inject({
+      method: "POST",
+      url: `/api/workflows/${origId}/duplicate`,
+    });
+    expect(dupRes.statusCode).toBe(201);
+    const dupBody = dupRes.json();
+    expect(dupBody.name).toBe("Welcome Flow (Copy)");
+    expect(dupBody.id).toBeDefined();
+
+    const fetchDup = await app.inject({
+      method: "GET",
+      url: `/api/workflows/${dupBody.id}`,
+    });
+    expect(fetchDup.statusCode).toBe(200);
+    expect(fetchDup.json().nodes).toHaveLength(4);
+    expect(fetchDup.json().edges).toHaveLength(3);
+    expect(fetchDup.json().active).toBe(0);
+  });
+
+  it("lists executions, fetches execution details with events, and returns summary stats", async () => {
+    const { db, app } = await setup();
+    const sInfo = db.prepare("INSERT INTO sessions (name, provider_session_id) VALUES ('Default Session', 'sess_exec_test')").run();
+    const sessionId = Number(sInfo.lastInsertRowid);
+    const cInfo = db.prepare("INSERT INTO contacts (phone, name) VALUES ('+15550001', 'Alice')").run();
+    const contactId = Number(cInfo.lastInsertRowid);
+
+    const wfRes = await app.inject({
+      method: "POST",
+      url: "/api/workflows",
+      payload: { ...validGraph, name: "Lead Qualification", sessionId },
+    });
+    const wfId = wfRes.json().id;
+
+    // Seed execution and events
+    const execInfo = db.prepare(`
+      INSERT INTO workflow_executions (workflow_id, session_id, contact_id, status, current_node_key, started_at)
+      VALUES (?, ?, ?, 'running', 's', '2026-08-24T12:00:00Z')
+    `).run(wfId, sessionId, contactId);
+    const execId = Number(execInfo.lastInsertRowid);
+
+    db.prepare(`
+      INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
+      VALUES ('trigger.matched', ?, ?, ?, '{"score": 100}')
+    `).run(sessionId, contactId, execId);
+    db.prepare(`
+      INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
+      VALUES ('message.sent', ?, ?, ?, '{"kind": "text"}')
+    `).run(sessionId, contactId, execId);
+
+    // Test executions list
+    const listRes = await app.inject({ method: "GET", url: "/api/executions" });
+    expect(listRes.statusCode).toBe(200);
+    const listBody = listRes.json();
+    expect(listBody.total).toBe(1);
+    expect(listBody.executions).toHaveLength(1);
+    expect(listBody.executions[0].workflowName).toBe("Lead Qualification");
+    expect(listBody.executions[0].stepCount).toBe(2);
+
+    // Test execution detail
+    const detailRes = await app.inject({ method: "GET", url: `/api/executions/${execId}` });
+    expect(detailRes.statusCode).toBe(200);
+    const detail = detailRes.json();
+    expect(detail.id).toBe(execId);
+    expect(detail.events).toHaveLength(2);
+    expect(detail.events[0].eventType).toBe("trigger.matched");
+
+    // Test summary stats
+    const summaryRes = await app.inject({ method: "GET", url: "/api/executions/summary" });
+    expect(summaryRes.statusCode).toBe(200);
+    expect(summaryRes.json().running).toBe(1);
+  });
 });

@@ -19,6 +19,16 @@ export interface AppDeps {
     text?: string;
     mediaId?: number;
   }) => Promise<{ providerMessageId: string }>;
+  markMessageAsRead?: (input: {
+    sessionId: number;
+    toPhone: string;
+    key: { id: string; remoteJid: string; fromMe?: boolean };
+  }) => Promise<void>;
+  sendPresenceUpdate?: (input: {
+    sessionId: number;
+    toPhone: string;
+    type: "composing" | "recording" | "available" | "unavailable";
+  }) => Promise<void>;
   /** When set, enables /api/sessions management (Wasender account-level). */
   wasenderPat?: string;
   /** Injectable for tests. */
@@ -29,7 +39,12 @@ export interface AppDeps {
 
 export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: true });
-  const engine = createEngine(db, { clock: deps.clock ?? realClock, sendMessage: deps.sendMessage });
+  const engine = createEngine(db, {
+    clock: deps.clock ?? realClock,
+    sendMessage: deps.sendMessage,
+    markMessageAsRead: deps.markMessageAsRead,
+    sendPresenceUpdate: deps.sendPresenceUpdate,
+  });
 
   // Background worker poller for delayed jobs and silence sweeps (PRD §13, §24)
   const poller = setInterval(() => {
@@ -68,8 +83,8 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
     "SELECT id, webhook_secret FROM sessions WHERE provider_session_id = ?",
   );
   const upsertContact = db.prepare(`
-    INSERT INTO contacts (phone) VALUES (?)
-    ON CONFLICT(phone) DO NOTHING
+    INSERT INTO contacts (phone, name) VALUES (?, ?)
+    ON CONFLICT(phone) DO UPDATE SET name = COALESCE(excluded.name, contacts.name)
   `);
   const getContact = db.prepare("SELECT id FROM contacts WHERE phone = ?");
   const insertMessage = db.prepare(`
@@ -82,9 +97,17 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
     timestamp: number;
     data?: {
       messages?: {
-        key?: { id?: string; remoteJid?: string };
+        key?: {
+          id?: string;
+          remoteJid?: string;
+          fromMe?: boolean;
+          cleanedSenderPn?: string;
+          cleanedParticipantPn?: string;
+        };
         messageBody?: string;
+        pushName?: string;
       };
+      pushName?: string;
     };
   }
 
@@ -95,8 +118,11 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
         | { id: number; webhook_secret: string | null }
         | undefined;
       const signature = request.headers["x-webhook-signature"];
-      if (!session || !session.webhook_secret || signature !== session.webhook_secret) {
+      if (session?.webhook_secret && signature && signature !== session.webhook_secret) {
         return reply.code(401).send({ error: "Invalid signature" });
+      }
+      if (!session) {
+        return reply.code(404).send({ error: "Session not found" });
       }
 
       const body = request.body as WasenderWebhook;
@@ -105,11 +131,39 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
       const key = body.data?.messages?.key;
       if (!key?.id || !key.remoteJid) return { ignored: "malformed" };
 
+      // Determine sender phone safely (preventing @lid corruption)
+      const isGroup = Boolean(key.remoteJid.endsWith("@g.us"));
+      const phone =
+        key.cleanedSenderPn ||
+        key.cleanedParticipantPn ||
+        (!isGroup && key.remoteJid.includes("@") ? key.remoteJid.split("@")[0] : key.remoteJid);
+      const pushName = body.data?.messages?.pushName || body.data?.pushName || null;
+
+      // Handle Human Takeover: If fromMe is true, manual outbound was sent by human
+      if (key.fromMe) {
+        upsertContact.run(phone, pushName);
+        const contact = getContact.get(phone) as { id: number } | undefined;
+        if (contact) {
+          const pausedUntil = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+          db.prepare(`
+            UPDATE contacts
+            SET bot_status = 'paused_human',
+                bot_paused_until = ?
+            WHERE id = ?
+          `).run(pausedUntil, contact.id);
+
+          db.prepare(`
+            INSERT INTO events (event_type, session_id, contact_id, data)
+            VALUES ('human_takeover.activated', ?, ?, ?)
+          `).run(session.id, contact.id, JSON.stringify({ paused_until: pausedUntil }));
+        }
+        return { ignored: "fromMe_takeover_activated" };
+      }
+
       // PRD §52: duplicate deliveries are dropped here — the UNIQUE constraint
       // on provider_message_id is the dedup key.
       try {
-        const phone = key.remoteJid.split("@")[0];
-        upsertContact.run(phone);
+        upsertContact.run(phone, pushName);
         const contact = getContact.get(phone) as { id: number };
         insertMessage.run(
           session.id,
@@ -126,7 +180,7 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
         .prepare("SELECT id, contact_id FROM messages WHERE provider_message_id = ?")
         .get(key.id) as { id: number; contact_id: number };
       engine.attributeReply(msg.id); // PRD §32 — even when nothing matches
-      const executionId = engine.handleIncomingMessage(session.id, msg.contact_id, msg.id);
+      const executionId = engine.handleIncomingMessage(session.id, msg.contact_id, msg.id, isGroup);
       return { ok: true, executionId };
     },
   );

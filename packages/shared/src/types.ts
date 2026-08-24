@@ -236,11 +236,69 @@ export interface WorkflowDefinition {
   name: string;
   description?: string;
   active: boolean;
-  sessionId?: number;
+  sessionId?: number | null;
+  sessionName?: string;
+  experimentId?: number | null;
   nodes: WorkflowNodeItem[];
   edges: WorkflowEdgeItem[];
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface WorkflowExecutionSummary {
+  id: number;
+  workflowId: number;
+  workflowName: string;
+  sessionId: number;
+  sessionName?: string;
+  contactId: number;
+  contactPhone: string;
+  contactName?: string;
+  triggerMessageId?: number | null;
+  triggerText?: string | null;
+  status:
+    | "running"
+    | "waiting"
+    | "waiting_input"
+    | "paused_human"
+    | "completed"
+    | "failed"
+    | "cancelled";
+  currentNodeKey?: string | null;
+  vars: Record<string, unknown>;
+  stepCount?: number;
+  startedAt: string;
+  finishedAt?: string | null;
+  durationMs?: number;
+}
+
+export interface ExecutionEventLog {
+  id: number;
+  executionId: number;
+  eventType: string;
+  nodeKey?: string | null;
+  data: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ExecutionFilterOptions {
+  sessionId?: number;
+  workflowId?: number;
+  status?: string;
+  search?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface ExecutionSummaryStats {
+  total: number;
+  running: number;
+  waiting: number;
+  completed: number;
+  waitingInput: number;
+  failed: number;
+  pausedHuman: number;
+  avgDurationMs?: number;
 }
 
 export interface FlowFallbackPolicy {
@@ -252,3 +310,4 @@ export const DEFAULT_FALLBACK_POLICY: FlowFallbackPolicy = {
   onUnknownReply: "reprompt",
   maxReprompts: 2,
 };
+

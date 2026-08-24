@@ -36,6 +36,8 @@ export interface WorkflowSummary {
   name: string;
   description: string | null;
   active: number;
+  sessionId?: number | null;
+  sessionName?: string;
   experimentId?: number | null;
 }
 
@@ -143,13 +145,14 @@ export const api = {
 
   listWorkflows: () => fetch("/api/workflows").then((r) => json<WorkflowSummary[]>(r)),
   getWorkflow: (id: string) => fetch(`/api/workflows/${id}`).then((r) => json<WorkflowGraph>(r)),
-  createWorkflow: (name: string, experimentId?: number | null) =>
+  createWorkflow: (name: string, experimentId?: number | null, sessionId?: number | null) =>
     fetch("/api/workflows", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         name,
         experimentId: experimentId ?? null,
+        sessionId: sessionId ?? null,
         nodes: [
           { nodeKey: "trigger", type: "trigger", config: {} },
           { nodeKey: "end", type: "end", config: {} },
@@ -157,6 +160,8 @@ export const api = {
         edges: [{ sourceKey: "trigger", targetKey: "end" }],
       }),
     }).then((r) => json<{ id: number }>(r)),
+  duplicateWorkflow: (id: string | number) =>
+    fetch(`/api/workflows/${id}/duplicate`, { method: "POST" }).then((r) => json<{ id: number; name: string }>(r)),
   saveWorkflow: (id: string, graph: Omit<WorkflowGraph, "id">) =>
     fetch(`/api/workflows/${id}`, {
       method: "PUT",

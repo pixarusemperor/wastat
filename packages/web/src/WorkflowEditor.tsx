@@ -425,8 +425,29 @@ export function CustomWorkflowNode({ data, selected }: NodeProps<Node<GraphNodeD
         )}
         {node.type === "send_media" && (
           <div className="flow-node-summary">
-            {c.mediaId ? `Asset #${c.mediaId}` : "No media selected"}
-            {c.caption ? ` • "${c.caption.slice(0, 30)}"` : ""}
+            {c.mediaId ? (
+              <div style={{ marginBottom: 6, overflow: "hidden", borderRadius: 4 }}>
+                <img
+                  src={`/api/media/${c.mediaId}/content`}
+                  alt="Media preview"
+                  style={{
+                    width: "100%",
+                    height: "80px",
+                    objectFit: "cover",
+                    borderRadius: "4px",
+                    border: "1px solid var(--border-color, #3f3f46)",
+                    display: "block",
+                  }}
+                  onError={(e) => {
+                    (e.target as HTMLElement).style.display = "none";
+                  }}
+                />
+              </div>
+            ) : null}
+            <div style={{ fontSize: "0.75rem", fontWeight: 600 }}>
+              {c.mediaId ? `🖼️ Asset #${c.mediaId}` : "No media selected"}
+            </div>
+            {c.caption ? <div style={{ fontSize: "0.7rem", color: "var(--muted)", marginTop: 2 }}>"{c.caption.slice(0, 40)}"</div> : ""}
           </div>
         )}
         {node.type === "send_menu" && (
@@ -666,9 +687,11 @@ export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void 
     name: "",
     description: null as string | null,
     active: 0,
+    sessionId: null as number | null,
     experimentId: null as number | null,
   });
   const [experiments, setExperiments] = useState<Array<{ id: number; name: string }>>([]);
+  const [sessions, setSessions] = useState<Array<{ id: number; name: string; providerSessionId: string }>>([]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
@@ -677,6 +700,7 @@ export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void 
 
   useEffect(() => {
     api.listExperiments().then(setExperiments).catch(() => {});
+    api.listSessions().then(setSessions).catch(() => {});
     api.getWorkflow(id).then((graph) => {
       const flow = toFlow(graph);
       setNodes(flow.nodes);
@@ -685,6 +709,7 @@ export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void 
         name: graph.name,
         description: graph.description,
         active: graph.active,
+        sessionId: graph.sessionId ?? null,
         experimentId: graph.experimentId ?? null,
       });
     });
@@ -795,12 +820,9 @@ export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void 
 
   async function duplicate() {
     try {
-      const copyName = `${meta.name} (Copy)`;
-      const created = await api.createWorkflow(copyName, meta.experimentId);
-      const graph = fromFlow({ nodes, edges }, { ...meta, name: copyName, active: 0 });
-      await api.saveWorkflow(String(created.id), graph);
+      const res = await api.duplicateWorkflow(id);
       showToast("Workflow duplicated");
-      window.location.hash = `#/workflows/${created.id}`;
+      window.location.hash = `#/workflows/${res.id}`;
     } catch {
       showToast("Duplicate failed", true);
     }
@@ -824,8 +846,30 @@ export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void 
         />
 
         <div className="toolbar-experiment-select">
+          <label htmlFor="wf-session-select" style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+            📱 Number:
+          </label>
+          <select
+            id="wf-session-select"
+            className="input-select-sm"
+            value={meta.sessionId ?? ""}
+            onChange={(e) => {
+              const val = e.target.value;
+              setMeta({ ...meta, sessionId: val ? Number(val) : null });
+            }}
+          >
+            <option value="">All Numbers (Global)</option>
+            {sessions.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name} ({s.providerSessionId})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="toolbar-experiment-select">
           <label htmlFor="wf-exp-select" style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
-            Experiment:
+            🧪 Exp:
           </label>
           <select
             id="wf-exp-select"
@@ -846,7 +890,7 @@ export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void 
         </div>
 
         <button className="btn btn-ghost btn-sm" onClick={autoLayout} title="Auto-layout graph">
-          ⚡ Auto-Layout
+          ⚡ Layout
         </button>
 
         <button
@@ -854,8 +898,17 @@ export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void 
           onClick={() => setShowSimulator(true)}
           style={{ borderColor: "var(--accent)", color: "var(--accent)" }}
         >
-          ▶ Test Simulator
+          ▶ Simulator
         </button>
+
+        <a
+          href={`#/executions?workflowId=${id}`}
+          className="btn btn-ghost btn-sm"
+          style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}
+          title="Inspect live execution traces"
+        >
+          ⚡ Traces
+        </a>
 
         <label className="switch">
           <input

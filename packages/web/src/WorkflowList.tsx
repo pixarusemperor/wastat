@@ -5,23 +5,41 @@ import { Dialog, StatusPill } from "./ui.js";
 export function WorkflowList({ onOpen }: { onOpen: (id: string) => void }) {
   const [workflows, setWorkflows] = useState<WorkflowSummary[] | null>(null);
   const [experiments, setExperiments] = useState<Record<number, string>>({});
+  const [sessions, setSessions] = useState<Array<{ id: number; name: string; providerSessionId: string }>>([]);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<WorkflowSummary | null>(null);
+  const [duplicatingId, setDuplicatingId] = useState<number | null>(null);
 
   async function refresh() {
     setError(null);
     try {
-      const [wfList, expList] = await Promise.all([
+      const [wfList, expList, sessList] = await Promise.all([
         api.listWorkflows(),
         api.listExperiments().catch(() => []),
+        api.listSessions().catch(() => []),
       ]);
       setWorkflows(wfList);
       const expMap: Record<number, string> = {};
       for (const e of expList) expMap[e.id] = e.name;
       setExperiments(expMap);
+      setSessions(sessList);
     } catch (e) {
       setError(String(e));
+    }
+  }
+
+  async function handleDuplicate(w: WorkflowSummary) {
+    if (duplicatingId) return;
+    setDuplicatingId(w.id);
+    try {
+      const res = await api.duplicateWorkflow(w.id);
+      await refresh();
+      onOpen(String(res.id));
+    } catch (e) {
+      alert(`Could not duplicate workflow: ${e}`);
+    } finally {
+      setDuplicatingId(null);
     }
   }
 
@@ -34,7 +52,7 @@ export function WorkflowList({ onOpen }: { onOpen: (id: string) => void }) {
       <header className="page-header">
         <div>
           <h1>Workflows</h1>
-          <p className="page-subtitle">Automations that reply to incoming WhatsApp messages.</p>
+          <p className="page-subtitle">Automations that reply to incoming WhatsApp messages with human-like delays.</p>
         </div>
         <button className="btn btn-primary" onClick={() => setCreating(true)}>
           New workflow
@@ -63,7 +81,7 @@ export function WorkflowList({ onOpen }: { onOpen: (id: string) => void }) {
             💬
           </div>
           <h2>No workflows yet</h2>
-          <p>Create one, add a keyword trigger and a reply, then set it live.</p>
+          <p>Create one, select a WhatsApp number, add a keyword trigger and a reply, then set it live.</p>
           <button className="btn btn-primary" onClick={() => setCreating(true)}>
             Create your first workflow
           </button>
@@ -73,17 +91,27 @@ export function WorkflowList({ onOpen }: { onOpen: (id: string) => void }) {
       {workflows !== null && workflows.length > 0 && (
         <ul role="list" className="card" style={{ listStyle: "none", margin: 0, padding: 0 }}>
           {workflows.map((w) => (
-            <li key={w.id} className="wf-row">
+            <li key={w.id} className="wf-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0.75rem 1rem", borderBottom: "1px solid var(--border-color, #27272a)" }}>
               <a
                 href={`#/workflows/${w.id}`}
                 className="wf-row-link"
+                style={{ flex: 1, textDecoration: "none", display: "flex", alignItems: "center", justifyContent: "space-between", marginRight: "1rem" }}
                 onClick={(e) => {
                   e.preventDefault();
                   onOpen(String(w.id));
                 }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <span>{w.name}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                  <span style={{ fontWeight: 600, color: "#f4f4f5" }}>{w.name}</span>
+                  {w.sessionName ? (
+                    <span style={{ fontSize: "0.7rem", padding: "0.15rem 0.45rem", borderRadius: "9999px", background: "rgba(34, 197, 94, 0.15)", color: "#4ade80", border: "1px solid rgba(34, 197, 94, 0.3)" }}>
+                      📱 {w.sessionName}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: "0.7rem", padding: "0.15rem 0.45rem", borderRadius: "9999px", background: "rgba(156, 163, 175, 0.15)", color: "#9ca3af", border: "1px solid rgba(156, 163, 175, 0.3)" }}>
+                      🌐 All Numbers
+                    </span>
+                  )}
                   {w.experimentId && experiments[w.experimentId] && (
                     <span className="pill pill-draft" style={{ fontSize: "0.6875rem", padding: "0.125rem 0.5rem" }}>
                       🧪 {experiments[w.experimentId]}
@@ -92,13 +120,23 @@ export function WorkflowList({ onOpen }: { onOpen: (id: string) => void }) {
                 </div>
                 <StatusPill active={w.active === 1} />
               </a>
-              <button
-                className="btn btn-ghost btn-danger btn-sm"
-                aria-label={`Delete ${w.name}`}
-                onClick={() => setDeleting(w)}
-              >
-                Delete
-              </button>
+              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  aria-label={`Duplicate ${w.name}`}
+                  disabled={duplicatingId === w.id}
+                  onClick={() => handleDuplicate(w)}
+                >
+                  {duplicatingId === w.id ? "Duplicating…" : "Duplicate"}
+                </button>
+                <button
+                  className="btn btn-ghost btn-danger btn-sm"
+                  aria-label={`Delete ${w.name}`}
+                  onClick={() => setDeleting(w)}
+                >
+                  Delete
+                </button>
+              </div>
             </li>
           ))}
         </ul>
@@ -108,6 +146,7 @@ export function WorkflowList({ onOpen }: { onOpen: (id: string) => void }) {
       <Dialog open={creating} onClose={() => setCreating(false)} labelledBy="create-wf-title">
         <CreateWorkflowForm
           experiments={experiments}
+          sessions={sessions}
           onCancel={() => setCreating(false)}
           onCreated={(id) => {
             setCreating(false);
@@ -149,14 +188,17 @@ export function WorkflowList({ onOpen }: { onOpen: (id: string) => void }) {
 
 function CreateWorkflowForm({
   experiments,
+  sessions,
   onCancel,
   onCreated,
 }: {
   experiments: Record<number, string>;
+  sessions: Array<{ id: number; name: string; providerSessionId: string }>;
   onCancel: () => void;
   onCreated: (id: string) => void;
 }) {
   const [name, setName] = useState("");
+  const [sessionId, setSessionId] = useState<string>("");
   const [experimentId, setExperimentId] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -171,7 +213,11 @@ function CreateWorkflowForm({
     if (!trimmed || busy) return;
     setBusy(true);
     try {
-      const created = await api.createWorkflow(trimmed, experimentId ? Number(experimentId) : null);
+      const created = await api.createWorkflow(
+        trimmed,
+        experimentId ? Number(experimentId) : null,
+        sessionId ? Number(sessionId) : null,
+      );
       onCreated(String(created.id));
     } finally {
       setBusy(false);
@@ -184,7 +230,7 @@ function CreateWorkflowForm({
     <form className="modal-body" onSubmit={submit}>
       <p className="modal-title">New workflow</p>
       <p className="page-subtitle" style={{ margin: "0.25rem 0 1.25rem" }}>
-        It starts with a trigger and an end node — add steps in the editor.
+        Select which WhatsApp Number will run this automation, and configure humanized replies.
       </p>
       <label className="field-label" htmlFor="wf-name">
         Name
@@ -193,11 +239,29 @@ function CreateWorkflowForm({
         ref={inputRef}
         id="wf-name"
         className="input"
-        placeholder="e.g. Price enquiry follow-up"
+        placeholder="e.g. Inbound Support / Sales Hook"
         value={name}
         onChange={(e) => setName(e.target.value)}
         required
       />
+
+      <label className="field-label" htmlFor="wf-session" style={{ marginTop: "1rem" }}>
+        WhatsApp Number / Session
+      </label>
+      <select
+        id="wf-session"
+        className="input"
+        value={sessionId}
+        onChange={(e) => setSessionId(e.target.value)}
+      >
+        <option value="">All WhatsApp Numbers (Global)</option>
+        {sessions.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name} ({s.providerSessionId})
+          </option>
+        ))}
+      </select>
+
       {expEntries.length > 0 && (
         <>
           <label className="field-label" htmlFor="wf-exp" style={{ marginTop: "1rem" }}>

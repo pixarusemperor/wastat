@@ -455,7 +455,21 @@ export function ExperimentsPage({
                                   {isBest && <span className="best-badge">Best</span>}
                                 </td>
                                 <td>
-                                  <StatusPill active={v.active === 1} />
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      const current = await api.getWorkflow(String(v.workflowId));
+                                      await api.saveWorkflow(String(v.workflowId), {
+                                        ...current,
+                                        active: v.active === 1 ? 0 : 1,
+                                      });
+                                      await refresh();
+                                    }}
+                                    style={{ background: "transparent", border: "none", cursor: "pointer", padding: 0 }}
+                                    title="Click to toggle variant live/draft status"
+                                  >
+                                    <StatusPill active={v.active === 1} />
+                                  </button>
                                 </td>
                                 <td>{v.assigned}</td>
                                 <td>{v.messaged}</td>

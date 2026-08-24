@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { buildApp } from "./app.js";
-import { makeWasenderTransport, openDb } from "./wasender.js";
+import { makeWasenderTransport, markMessageAsRead, sendPresenceUpdate, openDb } from "./wasender.js";
 
 const dbPath = process.env.DB_PATH ?? "wastat.db";
 const db = openDb(dbPath);
@@ -20,11 +20,27 @@ const app = await buildApp(db, {
   sendMessage: process.env.MOCK_SEND
     ? async () => ({ providerMessageId: `mock-${Date.now()}` })
     : async (input) => {
-    const row = getApiKey.get(input.sessionId) as { api_key_encrypted: Buffer | string | null } | undefined;
-    const apiKey = row?.api_key_encrypted?.toString("utf8");
-    if (!apiKey) throw { status: 500, code: "NO_SESSION_KEY" };
-      return makeWasenderTransport(db)({ ...input, apiKey });
-    },
+        const row = getApiKey.get(input.sessionId) as { api_key_encrypted: Buffer | string | null } | undefined;
+        const apiKey = row?.api_key_encrypted?.toString("utf8");
+        if (!apiKey) throw { status: 500, code: "NO_SESSION_KEY" };
+        return makeWasenderTransport(db)({ ...input, apiKey });
+      },
+  markMessageAsRead: process.env.MOCK_SEND
+    ? async () => {}
+    : async (input) => {
+        const row = getApiKey.get(input.sessionId) as { api_key_encrypted: Buffer | string | null } | undefined;
+        const apiKey = row?.api_key_encrypted?.toString("utf8");
+        if (!apiKey) return;
+        await markMessageAsRead(apiKey, input.key);
+      },
+  sendPresenceUpdate: process.env.MOCK_SEND
+    ? async () => {}
+    : async (input) => {
+        const row = getApiKey.get(input.sessionId) as { api_key_encrypted: Buffer | string | null } | undefined;
+        const apiKey = row?.api_key_encrypted?.toString("utf8");
+        if (!apiKey) return;
+        await sendPresenceUpdate(apiKey, input.toPhone, input.type);
+      },
 });
 
 if (process.env.WASENDER_PAT) {

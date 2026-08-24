@@ -79,11 +79,14 @@ CREATE TABLE IF NOT EXISTS workflows (
   name          TEXT NOT NULL,
   description   TEXT,
   active        INTEGER NOT NULL DEFAULT 0,
+  session_id    INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
   experiment_id INTEGER REFERENCES experiments(id),
   ai_enabled    INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_workflows_session ON workflows (session_id, active);
 
 CREATE TABLE IF NOT EXISTS workflow_nodes (
   id          INTEGER PRIMARY KEY,
@@ -158,12 +161,12 @@ CREATE TABLE IF NOT EXISTS workflow_executions (
 
 CREATE INDEX IF NOT EXISTS idx_executions_status ON workflow_executions (status, started_at);
 CREATE INDEX IF NOT EXISTS idx_executions_silence ON workflow_executions (status, silence_followup_at, silence_sweep_executed);
+CREATE INDEX IF NOT EXISTS idx_workflow_executions_lookup ON workflow_executions (session_id, contact_id, status);
 
--- Unified queue: outbound sends AND delay-node resumes (one poller).
--- Replaces the suggested separate outbound_queue / scheduled_jobs tables.
+-- Unified queue: outbound sends, mark-as-read, presence typing, and delay resumes.
 CREATE TABLE IF NOT EXISTS jobs (
   id           INTEGER PRIMARY KEY,
-  type         TEXT NOT NULL CHECK (type IN ('send_message', 'resume')),
+  type         TEXT NOT NULL CHECK (type IN ('send_message', 'mark_read', 'send_presence', 'resume')),
   execution_id INTEGER NOT NULL REFERENCES workflow_executions(id),
   node_key     TEXT,
   payload      TEXT NOT NULL DEFAULT '{}',
@@ -177,8 +180,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 CREATE INDEX IF NOT EXISTS idx_jobs_poll ON jobs (status, priority, run_at);
 
--- Single audit-trail table covering all event types from PRD 42.
--- Subject references are nullable depending on the event.
+-- Single audit-trail table covering all event types.
 CREATE TABLE IF NOT EXISTS events (
   id           INTEGER PRIMARY KEY,
   event_type   TEXT NOT NULL,
@@ -191,6 +193,7 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_execution ON events (execution_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_events_execution_ordered ON events (execution_id, id ASC);
 CREATE INDEX IF NOT EXISTS idx_events_type      ON events (event_type, created_at);
 
 -- Dialogue Learning Flywheel & Distilled Knowledge Base

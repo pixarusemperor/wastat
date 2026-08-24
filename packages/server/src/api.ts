@@ -47,6 +47,7 @@ interface GraphInput {
   name?: unknown;
   description?: unknown;
   active?: unknown;
+  sessionId?: unknown;
   experimentId?: unknown;
   nodes?: unknown;
   edges?: unknown;
@@ -70,6 +71,7 @@ interface ParsedGraph {
   name: string;
   description: string | null;
   active: number;
+  sessionId: number | null;
   experimentId: number | null;
   nodes: Array<{ nodeKey: string; type: string; config: unknown; positionX: number; positionY: number }>;
   edges: EdgeInput[];
@@ -97,7 +99,8 @@ function parseGraph(body: unknown): { error: string } | { graph: ParsedGraph } {
     graph: {
       name: b.name,
       description: typeof b.description === "string" ? b.description : null,
-      active: b.active === true ? 1 : 0,
+      active: b.active === true || b.active === 1 ? 1 : 0,
+      sessionId: typeof b.sessionId === "number" ? b.sessionId : null,
       experimentId: typeof b.experimentId === "number" ? b.experimentId : null,
       nodes: nodes.map((n) => ({
         ...n,
@@ -120,7 +123,7 @@ export function registerApiRoutes(
   void app.register(mcpRoutes);
 
   const insertWorkflow = db.prepare(
-    "INSERT INTO workflows (name, description, active, experiment_id) VALUES (?, ?, ?, ?)",
+    "INSERT INTO workflows (name, description, active, session_id, experiment_id) VALUES (?, ?, ?, ?, ?)",
   );
   const insertNode = db.prepare(
     "INSERT INTO workflow_nodes (workflow_id, node_key, type, config, position_x, position_y) VALUES (?, ?, ?, ?, ?, ?)",
@@ -144,19 +147,33 @@ export function registerApiRoutes(
     const parsed = parseGraph(request.body);
     if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
     const g = parsed.graph;
-    const info = insertWorkflow.run(g.name, g.description, g.active, g.experimentId);
+    const info = insertWorkflow.run(g.name, g.description, g.active, g.sessionId, g.experimentId);
     const workflowId = Number(info.lastInsertRowid);
     saveGraph(workflowId, g);
     return reply.code(201).send({ id: workflowId });
   });
 
   app.get("/api/workflows", async () => {
-    return db.prepare("SELECT id, name, description, active, experiment_id AS experimentId FROM workflows ORDER BY id").all();
+    return db
+      .prepare(`
+        SELECT w.id, w.name, w.description, w.active, w.session_id AS sessionId, s.name AS sessionName,
+               w.experiment_id AS experimentId, w.created_at AS createdAt, w.updated_at AS updatedAt
+        FROM workflows w
+        LEFT JOIN sessions s ON s.id = w.session_id
+        ORDER BY w.id DESC
+      `)
+      .all();
   });
 
   app.get<{ Params: { id: string } }>("/api/workflows/:id", async (request, reply) => {
     const wf = db
-      .prepare("SELECT id, name, description, active, experiment_id AS experimentId FROM workflows WHERE id = ?")
+      .prepare(`
+        SELECT w.id, w.name, w.description, w.active, w.session_id AS sessionId, s.name AS sessionName,
+               w.experiment_id AS experimentId, w.created_at AS createdAt, w.updated_at AS updatedAt
+        FROM workflows w
+        LEFT JOIN sessions s ON s.id = w.session_id
+        WHERE w.id = ?
+      `)
       .get(request.params.id) as Record<string, unknown> | undefined;
     if (!wf) return reply.code(404).send({ error: "not found" });
     const nodes = (
@@ -195,15 +212,59 @@ export function registerApiRoutes(
     const parsed = parseGraph(request.body);
     if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
     const g = parsed.graph;
-    db.prepare("UPDATE workflows SET name = ?, description = ?, active = ?, experiment_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(
+    db.prepare("UPDATE workflows SET name = ?, description = ?, active = ?, session_id = ?, experiment_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(
       g.name,
       g.description,
       g.active,
+      g.sessionId,
       g.experimentId,
       id,
     );
     saveGraph(id, g);
     return { ok: true };
+  });
+
+  app.post<{ Params: { id: string } }>("/api/workflows/:id/duplicate", async (request, reply) => {
+    const id = Number(request.params.id);
+    const sourceWf = db.prepare("SELECT * FROM workflows WHERE id = ?").get(id) as {
+      name: string;
+      description: string | null;
+      session_id: number | null;
+      experiment_id: number | null;
+    } | undefined;
+    if (!sourceWf) return reply.code(404).send({ error: "Source workflow not found" });
+
+    const newName = `${sourceWf.name} (Copy)`;
+    const info = insertWorkflow.run(
+      newName,
+      sourceWf.description,
+      0, // new duplicates start as inactive/draft
+      sourceWf.session_id,
+      sourceWf.experiment_id,
+    );
+    const newWorkflowId = Number(info.lastInsertRowid);
+
+    const nodes = db.prepare("SELECT node_key, type, config, position_x, position_y FROM workflow_nodes WHERE workflow_id = ?").all(id) as Array<{
+      node_key: string;
+      type: string;
+      config: string;
+      position_x: number;
+      position_y: number;
+    }>;
+    for (const n of nodes) {
+      insertNode.run(newWorkflowId, n.node_key, n.type, n.config, n.position_x, n.position_y);
+    }
+
+    const edges = db.prepare("SELECT source_key, target_key, handle FROM workflow_edges WHERE workflow_id = ?").all(id) as Array<{
+      source_key: string;
+      target_key: string;
+      handle: string | null;
+    }>;
+    for (const e of edges) {
+      insertEdge.run(newWorkflowId, e.source_key, e.target_key, e.handle ?? null);
+    }
+
+    return reply.code(201).send({ id: newWorkflowId, name: newName });
   });
 
   app.delete<{ Params: { id: string } }>("/api/workflows/:id", async (request, reply) => {
@@ -824,6 +885,181 @@ export function registerApiRoutes(
       experimentId,
       stages: ["hook_delivered", "presentation_sent", "replied_2h", "qualified", "phase_2_closed"],
       variants,
+    };
+  });
+
+  // ============================================================
+  // Execution Inspector & Audit Log Endpoints
+  // ============================================================
+
+  app.get("/api/executions/summary", async () => {
+    const row = (db.prepare(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running,
+        SUM(CASE WHEN status = 'waiting' THEN 1 ELSE 0 END) AS waiting,
+        SUM(CASE WHEN status = 'waiting_input' THEN 1 ELSE 0 END) AS waitingInput,
+        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
+        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+        SUM(CASE WHEN status = 'paused_human' THEN 1 ELSE 0 END) AS pausedHuman
+      FROM workflow_executions
+    `).get() ?? {}) as Record<string, number | null>;
+
+    return {
+      total: row.total ?? 0,
+      running: row.running ?? 0,
+      waiting: row.waiting ?? 0,
+      waitingInput: row.waitingInput ?? 0,
+      completed: row.completed ?? 0,
+      failed: row.failed ?? 0,
+      pausedHuman: row.pausedHuman ?? 0,
+    };
+  });
+
+  app.get<{
+    Querystring: {
+      limit?: string;
+      offset?: string;
+      status?: string;
+      sessionId?: string;
+      workflowId?: string;
+      contactId?: string;
+      search?: string;
+    };
+  }>("/api/executions", async (request) => {
+    const limit = Math.min(100, Math.max(1, parseInt(request.query.limit || "50", 10)));
+    const offset = Math.max(0, parseInt(request.query.offset || "0", 10));
+
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (request.query.status) {
+      conditions.push("we.status = ?");
+      params.push(request.query.status);
+    }
+    if (request.query.sessionId) {
+      conditions.push("we.session_id = ?");
+      params.push(parseInt(request.query.sessionId, 10));
+    }
+    if (request.query.workflowId) {
+      conditions.push("we.workflow_id = ?");
+      params.push(parseInt(request.query.workflowId, 10));
+    }
+    if (request.query.contactId) {
+      conditions.push("we.contact_id = ?");
+      params.push(parseInt(request.query.contactId, 10));
+    }
+    if (request.query.search) {
+      const q = `%${request.query.search.trim()}%`;
+      conditions.push("(c.phone LIKE ? OR c.name LIKE ? OR w.name LIKE ? OR m.text LIKE ?)");
+      params.push(q, q, q, q);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const rows = db.prepare(`
+      SELECT 
+        we.id,
+        we.workflow_id AS workflowId,
+        w.name AS workflowName,
+        we.session_id AS sessionId,
+        s.name AS sessionName,
+        we.contact_id AS contactId,
+        c.phone AS contactPhone,
+        c.name AS contactName,
+        we.trigger_message_id AS triggerMessageId,
+        m.text AS triggerMessageText,
+        we.status,
+        we.current_node_key AS currentNodeKey,
+        we.started_at AS startedAt,
+        we.finished_at AS finishedAt,
+        (SELECT COUNT(*) FROM events e WHERE e.execution_id = we.id) AS stepCount
+      FROM workflow_executions we
+      LEFT JOIN workflows w ON w.id = we.workflow_id
+      LEFT JOIN sessions s ON s.id = we.session_id
+      LEFT JOIN contacts c ON c.id = we.contact_id
+      LEFT JOIN messages m ON m.id = we.trigger_message_id
+      ${whereClause}
+      ORDER BY we.id DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, limit, offset);
+
+    const totalRow = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM workflow_executions we
+      LEFT JOIN workflows w ON w.id = we.workflow_id
+      LEFT JOIN sessions s ON s.id = we.session_id
+      LEFT JOIN contacts c ON c.id = we.contact_id
+      LEFT JOIN messages m ON m.id = we.trigger_message_id
+      ${whereClause}
+    `).get(...params) as { count: number } | undefined;
+
+    return {
+      executions: rows,
+      total: totalRow?.count ?? 0,
+      limit,
+      offset,
+    };
+  });
+
+  app.get<{ Params: { id: string } }>("/api/executions/:id", async (request, reply) => {
+    const executionId = Number(request.params.id);
+    const execution = db.prepare(`
+      SELECT 
+        we.id,
+        we.workflow_id AS workflowId,
+        w.name AS workflowName,
+        we.session_id AS sessionId,
+        s.name AS sessionName,
+        we.contact_id AS contactId,
+        c.phone AS contactPhone,
+        c.name AS contactName,
+        we.trigger_message_id AS triggerMessageId,
+        m.text AS triggerMessageText,
+        we.status,
+        we.current_node_key AS currentNodeKey,
+        we.vars,
+        we.silence_followup_at AS silenceFollowupAt,
+        we.started_at AS startedAt,
+        we.finished_at AS finishedAt
+      FROM workflow_executions we
+      LEFT JOIN workflows w ON w.id = we.workflow_id
+      LEFT JOIN sessions s ON s.id = we.session_id
+      LEFT JOIN contacts c ON c.id = we.contact_id
+      LEFT JOIN messages m ON m.id = we.trigger_message_id
+      WHERE we.id = ?
+    `).get(executionId) as Record<string, unknown> | undefined;
+
+    if (!execution) return reply.code(404).send({ error: "Execution not found" });
+
+    const events = (db.prepare(`
+      SELECT 
+        id,
+        event_type AS eventType,
+        session_id AS sessionId,
+        contact_id AS contactId,
+        execution_id AS executionId,
+        message_id AS messageId,
+        data,
+        created_at AS createdAt
+      FROM events
+      WHERE execution_id = ?
+      ORDER BY id ASC
+    `).all(executionId) as any[]).map((e) => {
+      let parsedData = {};
+      try {
+        parsedData = JSON.parse(e.data || "{}");
+      } catch {}
+      return {
+        ...e,
+        data: parsedData,
+      };
+    });
+
+    return {
+      ...execution,
+      vars: typeof execution.vars === "string" ? JSON.parse(execution.vars || "{}") : execution.vars,
+      events,
     };
   });
 }

@@ -26,6 +26,8 @@ export interface WorkflowGraph {
   name: string;
   description: string | null;
   active: number;
+  sessionId?: number | null;
+  sessionName?: string;
   experimentId?: number | null;
   nodes: GraphNode[];
   edges: GraphEdge[];

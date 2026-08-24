@@ -6,9 +6,11 @@ import { InboxPage } from "./Inbox";
 import { SessionsPage } from "./Sessions";
 import { ProductsPage } from "./Products";
 import { BroadcastsPage } from "./Broadcasts";
+import { ExecutionsPage } from "./Executions";
 
 type Route =
   | { page: "list" | "inbox" | "sessions" | "products" | "broadcasts" }
+  | { page: "executions"; execId?: string | null }
   | { page: "experiments"; expId?: string | null }
   | { page: "editor"; id: string };
 
@@ -18,6 +20,8 @@ function currentRoute(): Route {
   if (wf) return { page: "editor", id: wf[1] };
   const exp = hash.match(/^#\/experiments(?:\/(.+))?$/);
   if (exp) return { page: "experiments", expId: exp[1] ?? null };
+  const exec = hash.match(/^#\/executions(?:\/(.+))?$/);
+  if (exec) return { page: "executions", execId: exec[1] ?? null };
   if (hash.startsWith("#/inbox")) return { page: "inbox" };
   if (hash.startsWith("#/sessions")) return { page: "sessions" };
   if (hash.startsWith("#/products")) return { page: "products" };
@@ -31,6 +35,7 @@ function navigate(hash: string) {
 
 const TABS = [
   { hash: "#/", label: "Workflows", page: "list" },
+  { hash: "#/executions", label: "⚡ Executions", page: "executions" },
   { hash: "#/experiments", label: "A/B Experiments", page: "experiments" },
   { hash: "#/inbox", label: "Inbox", page: "inbox" },
   { hash: "#/sessions", label: "Sessions", page: "sessions" },
@@ -76,6 +81,9 @@ export default function App() {
         <WorkflowEditor key={route.id} id={route.id} onBack={() => navigate("#/")} />
       )}
       {route.page === "list" && <WorkflowList onOpen={(id) => navigate(`#/workflows/${id}`)} />}
+      {route.page === "executions" && (
+        <ExecutionsPage initialExecutionId={route.execId} />
+      )}
       {route.page === "experiments" && (
         <ExperimentsPage
           selectedId={route.expId}
@@ -83,10 +91,10 @@ export default function App() {
           onSelectExperiment={(id) => navigate(id ? `#/experiments/${id}` : "#/experiments")}
         />
       )}
-  {route.page === "inbox" && <InboxPage />}
-  {route.page === "sessions" && <SessionsPage />}
-  {route.page === "products" && <ProductsPage />}
-  {route.page === "broadcasts" && <BroadcastsPage />}
+      {route.page === "inbox" && <InboxPage />}
+      {route.page === "sessions" && <SessionsPage />}
+      {route.page === "products" && <ProductsPage />}
+      {route.page === "broadcasts" && <BroadcastsPage />}
     </>
   );
 }

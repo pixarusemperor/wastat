@@ -655,6 +655,25 @@ export function InboxPage() {
                                 <RocketIcon style={{ width: 12, height: 12 }} />
                                 <span>{m.workflowName}</span>
                                 {m.experimentName && <span>({m.experimentName})</span>}
+                                {m.workflowExecutionId && (
+                                  <a
+                                    href={`#/executions/${m.workflowExecutionId}`}
+                                    style={{
+                                      marginLeft: "auto",
+                                      fontSize: "0.6875rem",
+                                      background: "rgba(59, 130, 246, 0.15)",
+                                      color: "#60a5fa",
+                                      border: "1px solid rgba(59, 130, 246, 0.3)",
+                                      padding: "1px 5px",
+                                      borderRadius: "4px",
+                                      textDecoration: "none",
+                                      fontWeight: 600,
+                                    }}
+                                    title="View Execution Trace"
+                                  >
+                                    ⚡ #{m.workflowExecutionId}
+                                  </a>
+                                )}
                               </div>
                             )}
 

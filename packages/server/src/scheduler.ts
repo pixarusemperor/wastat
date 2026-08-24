@@ -41,7 +41,7 @@ export function classifyError(err: unknown): ErrorClass {
 
 export interface JobRow {
   id: number;
-  type: "send_message" | "resume";
+  type: "send_message" | "mark_read" | "send_presence" | "resume";
   execution_id: number;
   node_key: string | null;
   payload: string;
@@ -55,7 +55,7 @@ export interface JobRow {
 export type JobExecutor = (job: JobRow) => Promise<void>;
 
 export interface EnqueueInput {
-  type: "send_message" | "resume";
+  type: "send_message" | "mark_read" | "send_presence" | "resume";
   executionId: number;
   nodeKey?: string;
   payload?: unknown;
