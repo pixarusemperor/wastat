@@ -117,6 +117,152 @@ export function makeWasenderTransport(
   };
 }
 
+/** Mark message as read (blue ticks) */
+export async function markMessageAsRead(
+  apiKey: string,
+  key: { id: string; remoteJid: string; fromMe?: boolean },
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const url = `${process.env.WASENDER_BASE_URL ?? "https://www.wasenderapi.com/api"}/messages/read`;
+  await fetchImpl(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ key }),
+  }).catch(() => {});
+}
+
+/** React to a message with an emoji */
+export async function sendReaction(
+  apiKey: string,
+  toPhone: string,
+  key: { id: string; remoteJid: string; fromMe?: boolean },
+  emoji: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  await fetchImpl(WASENDER_API, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ to: toPhone, reaction: { key, text: emoji } }),
+  }).catch(() => {});
+}
+
+/** Send a native WhatsApp poll */
+export async function sendPoll(
+  apiKey: string,
+  toPhone: string,
+  question: string,
+  options: string[],
+  multiSelect = false,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  await fetchImpl(WASENDER_API, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      to: toPhone,
+      poll: { question, options, multiSelect },
+    }),
+  }).catch(() => {});
+}
+
+/** Send a Contact Card (vCard) */
+export async function sendContactCard(
+  apiKey: string,
+  toPhone: string,
+  contact: { name: string; phone: string },
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  await fetchImpl(WASENDER_API, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ to: toPhone, contact }),
+  }).catch(() => {});
+}
+
+/** Send GPS Location Pin */
+export async function sendLocation(
+  apiKey: string,
+  toPhone: string,
+  location: { latitude: number; longitude: number; name?: string; address?: string },
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  await fetchImpl(WASENDER_API, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ to: toPhone, location }),
+  }).catch(() => {});
+}
+
+/** Block a contact */
+export async function blockContact(
+  apiKey: string,
+  contactPhone: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const url = `${process.env.WASENDER_BASE_URL ?? "https://www.wasenderapi.com/api"}/contacts/${encodeURIComponent(contactPhone)}/block`;
+  await fetchImpl(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+  }).catch(() => {});
+}
+
+/** Unblock a contact */
+export async function unblockContact(
+  apiKey: string,
+  contactPhone: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const url = `${process.env.WASENDER_BASE_URL ?? "https://www.wasenderapi.com/api"}/contacts/${encodeURIComponent(contactPhone)}/unblock`;
+  await fetchImpl(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+  }).catch(() => {});
+}
+
+/** Save or update contact in address book */
+export async function upsertContact(
+  apiKey: string,
+  contact: { phone: string; name?: string },
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const url = `${process.env.WASENDER_BASE_URL ?? "https://www.wasenderapi.com/api"}/contacts`;
+  await fetchImpl(url, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(contact),
+  }).catch(() => {});
+}
+
+/** Add participants to group */
+export async function addGroupParticipants(
+  apiKey: string,
+  groupJid: string,
+  participants: string[],
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const url = `${process.env.WASENDER_BASE_URL ?? "https://www.wasenderapi.com/api"}/groups/${encodeURIComponent(groupJid)}/participants/add`;
+  await fetchImpl(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ participants }),
+  }).catch(() => {});
+}
+
+/** Remove participants from group */
+export async function removeGroupParticipants(
+  apiKey: string,
+  groupJid: string,
+  participants: string[],
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const url = `${process.env.WASENDER_BASE_URL ?? "https://www.wasenderapi.com/api"}/groups/${encodeURIComponent(groupJid)}/participants/remove`;
+  await fetchImpl(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ participants }),
+  }).catch(() => {});
+}
+
 import { dirname } from "node:path";
 import { mkdirSync } from "node:fs";
 
@@ -131,3 +277,4 @@ export function openDb(path: string): BetterSqlite3.Database {
   db.pragma("foreign_keys = ON"); // ADR 0001
   return db;
 }
+

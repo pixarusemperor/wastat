@@ -22,11 +22,32 @@ import { api } from "./api.js";
 import { fromFlow, toFlow, type GraphNode, type GraphNodeData } from "./graph.js";
 
 export const NODE_TYPES = [
+  // Triggers
   "trigger",
   "keyword",
+  "trigger_personal",
+  "trigger_group",
+  "trigger_reaction",
+  "trigger_poll_result",
+  "trigger_call",
+  "trigger_participant",
+  // Messaging Actions
   "send_text",
   "send_media",
   "send_menu",
+  "send_poll",
+  "send_contact",
+  "send_location",
+  "send_presence",
+  "mark_read",
+  "react_message",
+  // Contact & Group Actions
+  "upsert_contact",
+  "block_contact",
+  "unblock_contact",
+  "add_group_participant",
+  "remove_group_participant",
+  // Flow Control
   "collect_input",
   "condition",
   "split_test",
@@ -34,25 +55,108 @@ export const NODE_TYPES = [
   "end",
 ] as const;
 
+export const PALETTE_CATEGORIES = [
+  {
+    title: "⚡ Inbound Triggers",
+    types: [
+      "trigger",
+      "trigger_personal",
+      "trigger_group",
+      "trigger_reaction",
+      "trigger_poll_result",
+      "trigger_call",
+      "trigger_participant",
+    ] as (typeof NODE_TYPES)[number][],
+  },
+  {
+    title: "💬 WhatsApp Messaging",
+    types: [
+      "send_text",
+      "send_media",
+      "send_menu",
+      "send_poll",
+      "send_contact",
+      "send_location",
+      "send_presence",
+      "mark_read",
+      "react_message",
+    ] as (typeof NODE_TYPES)[number][],
+  },
+  {
+    title: "👥 Contacts & Groups",
+    types: [
+      "upsert_contact",
+      "block_contact",
+      "unblock_contact",
+      "add_group_participant",
+      "remove_group_participant",
+    ] as (typeof NODE_TYPES)[number][],
+  },
+  {
+    title: "🔀 Flow Control & Logic",
+    types: [
+      "collect_input",
+      "condition",
+      "split_test",
+      "delay",
+      "end",
+    ] as (typeof NODE_TYPES)[number][],
+  },
+];
+
 export const NODE_LABELS: Record<(typeof NODE_TYPES)[number], string> = {
-  trigger: "Trigger",
-  keyword: "Keyword match",
-  send_text: "Send text",
-  send_media: "Send media",
-  send_menu: "Send menu (Options)",
-  collect_input: "Collect input (Var)",
+  trigger: "Message Received (Any)",
+  keyword: "Keyword Match",
+  trigger_personal: "Direct Message",
+  trigger_group: "Group Message",
+  trigger_reaction: "Message Reaction",
+  trigger_poll_result: "Poll Vote Cast",
+  trigger_call: "Incoming Call",
+  trigger_participant: "Group Member Event",
+  send_text: "Send Text",
+  send_media: "Send Media",
+  send_menu: "Send Menu (Options)",
+  send_poll: "Send Native Poll",
+  send_contact: "Send Contact Card",
+  send_location: "Send Location Pin",
+  send_presence: "Typing Presence",
+  mark_read: "Mark Read (Blue Ticks)",
+  react_message: "Emoji Reaction",
+  upsert_contact: "Save Contact",
+  block_contact: "Block Contact",
+  unblock_contact: "Unblock Contact",
+  add_group_participant: "Add Group Member",
+  remove_group_participant: "Remove Member",
+  collect_input: "Collect Input (Var)",
   condition: "Condition (If/Else)",
-  split_test: "A/B Split test",
-  delay: "Delay",
-  end: "End",
+  split_test: "A/B Split Test",
+  delay: "Delay / Wait",
+  end: "End Flow",
 };
 
 export const NODE_ICONS: Record<(typeof NODE_TYPES)[number], string> = {
   trigger: "⚡",
   keyword: "🔍",
+  trigger_personal: "💬",
+  trigger_group: "👥",
+  trigger_reaction: "👍",
+  trigger_poll_result: "📊",
+  trigger_call: "📞",
+  trigger_participant: "🚪",
   send_text: "💬",
   send_media: "🖼️",
   send_menu: "📋",
+  send_poll: "📊",
+  send_contact: "📇",
+  send_location: "📍",
+  send_presence: "⌨️",
+  mark_read: "✓✓",
+  react_message: "❤️",
+  upsert_contact: "👤",
+  block_contact: "🚫",
+  unblock_contact: "🔓",
+  add_group_participant: "➕",
+  remove_group_participant: "➖",
   collect_input: "✍️",
   condition: "🔀",
   split_test: "🎲",
@@ -63,9 +167,26 @@ export const NODE_ICONS: Record<(typeof NODE_TYPES)[number], string> = {
 export const NODE_THEMES: Record<(typeof NODE_TYPES)[number], { border: string; bg: string; badge: string }> = {
   trigger: { border: "#10b981", bg: "#ecfdf5", badge: "#059669" },
   keyword: { border: "#06b6d4", bg: "#ecfeff", badge: "#0891b2" },
+  trigger_personal: { border: "#059669", bg: "#ecfdf5", badge: "#047857" },
+  trigger_group: { border: "#0891b2", bg: "#ecfeff", badge: "#0e7490" },
+  trigger_reaction: { border: "#f59e0b", bg: "#fffbeb", badge: "#d97706" },
+  trigger_poll_result: { border: "#8b5cf6", bg: "#f5f3ff", badge: "#7c3aed" },
+  trigger_call: { border: "#ef4444", bg: "#fef2f2", badge: "#dc2626" },
+  trigger_participant: { border: "#6366f1", bg: "#eef2ff", badge: "#4f46e5" },
   send_text: { border: "#3b82f6", bg: "#eff6ff", badge: "#2563eb" },
   send_media: { border: "#8b5cf6", bg: "#f5f3ff", badge: "#7c3aed" },
   send_menu: { border: "#f59e0b", bg: "#fffbeb", badge: "#d97706" },
+  send_poll: { border: "#10b981", bg: "#ecfdf5", badge: "#059669" },
+  send_contact: { border: "#06b6d4", bg: "#ecfeff", badge: "#0891b2" },
+  send_location: { border: "#ec4899", bg: "#fdf2f8", badge: "#db2777" },
+  send_presence: { border: "#14b8a6", bg: "#f0fdfa", badge: "#0d9488" },
+  mark_read: { border: "#3b82f6", bg: "#eff6ff", badge: "#2563eb" },
+  react_message: { border: "#f43f5e", bg: "#fff1f2", badge: "#e11d48" },
+  upsert_contact: { border: "#0284c7", bg: "#f0f9ff", badge: "#0369a1" },
+  block_contact: { border: "#dc2626", bg: "#fef2f2", badge: "#b91c1c" },
+  unblock_contact: { border: "#16a34a", bg: "#f0fdf4", badge: "#15803d" },
+  add_group_participant: { border: "#4f46e5", bg: "#eef2ff", badge: "#4338ca" },
+  remove_group_participant: { border: "#b91c1c", bg: "#fef2f2", badge: "#991b1b" },
   collect_input: { border: "#14b8a6", bg: "#f0fdfa", badge: "#0d9488" },
   condition: { border: "#f97316", bg: "#fff7ed", badge: "#ea580c" },
   split_test: { border: "#6366f1", bg: "#eef2ff", badge: "#4f46e5" },
@@ -77,7 +198,17 @@ export function defaultConfig(type: (typeof NODE_TYPES)[number]): Record<string,
   switch (type) {
     case "trigger":
     case "keyword":
+    case "trigger_personal":
+    case "trigger_group":
       return { phrase: "", keywords: [], algorithm: "dice", threshold: 80, priority: 0 };
+    case "trigger_reaction":
+      return { emoji: "👍" };
+    case "trigger_poll_result":
+      return {};
+    case "trigger_call":
+      return { allowVideo: true };
+    case "trigger_participant":
+      return { actionFilter: "add" };
     case "send_text":
       return { text: "" };
     case "send_media":
@@ -92,6 +223,30 @@ export function defaultConfig(type: (typeof NODE_TYPES)[number]): Record<string,
           { id: "opt_2", title: "Option 2", description: "Second choice" },
         ],
       };
+    case "send_poll":
+      return {
+        question: "What is your preference?",
+        options: ["Option A", "Option B"],
+        multiSelect: false,
+      };
+    case "send_contact":
+      return { name: "Support Team", phone: "+1234567890" };
+    case "send_location":
+      return { latitude: 48.8584, longitude: 2.2945, name: "Our Office", address: "Paris, France" };
+    case "send_presence":
+      return { presenceType: "composing", durationSeconds: 3 };
+    case "mark_read":
+      return {};
+    case "react_message":
+      return { emoji: "❤️" };
+    case "upsert_contact":
+      return { name: "{{vars.user_name}}", phone: "{{contact.phone}}" };
+    case "block_contact":
+    case "unblock_contact":
+      return { phone: "{{contact.phone}}" };
+    case "add_group_participant":
+    case "remove_group_participant":
+      return { groupJid: "1234567890-group@g.us", phone: "{{contact.phone}}" };
     case "collect_input":
       return {
         promptText: "Please enter your information:",
@@ -118,6 +273,7 @@ export function defaultConfig(type: (typeof NODE_TYPES)[number]): Record<string,
       return {};
   }
 }
+
 
 /** Custom Removable Edge Component with midpoint delete button */
 export function RemovableEdge({
@@ -195,7 +351,7 @@ export function CustomWorkflowNode({ data, selected }: NodeProps<Node<GraphNodeD
         boxShadow: selected ? `0 0 0 2px ${theme.badge}40` : undefined,
       }}
     >
-      {node.type !== "trigger" && (
+      {!node.type.startsWith("trigger") && node.type !== "keyword" && (
         <Handle
           type="target"
           position={Position.Top}
@@ -221,7 +377,37 @@ export function CustomWorkflowNode({ data, selected }: NodeProps<Node<GraphNodeD
         )}
         {node.type === "trigger" && (
           <div className="flow-node-summary">
-            {c.phrase || c.keywords?.length ? `Keywords: ${c.phrase || c.keywords?.join(", ")}` : "Starts on inbound match"}
+            {c.phrase || c.keywords?.length ? `Keywords: ${c.phrase || c.keywords?.join(", ")}` : "Starts on all inbound messages"}
+          </div>
+        )}
+        {node.type === "trigger_personal" && (
+          <div className="flow-node-summary">
+            Starts on direct 1-on-1 private chat messages
+          </div>
+        )}
+        {node.type === "trigger_group" && (
+          <div className="flow-node-summary">
+            Starts on WhatsApp group messages
+          </div>
+        )}
+        {node.type === "trigger_reaction" && (
+          <div className="flow-node-summary">
+            Fires on message reaction: <span style={{ fontSize: "1.2rem" }}>{c.emoji || "Any"}</span>
+          </div>
+        )}
+        {node.type === "trigger_poll_result" && (
+          <div className="flow-node-summary">
+            Fires when user votes in a poll
+          </div>
+        )}
+        {node.type === "trigger_call" && (
+          <div className="flow-node-summary">
+            Fires on incoming WhatsApp {c.allowVideo ? "voice & video" : "voice"} calls
+          </div>
+        )}
+        {node.type === "trigger_participant" && (
+          <div className="flow-node-summary">
+            Fires on group member {c.actionFilter || "add/remove"} events
           </div>
         )}
         {node.type === "send_text" && (
@@ -246,6 +432,70 @@ export function CustomWorkflowNode({ data, selected }: NodeProps<Node<GraphNodeD
                 <span className="flow-node-option-title">{opt.title}</span>
               </div>
             ))}
+          </div>
+        )}
+        {node.type === "send_poll" && (
+          <div className="flow-node-menu-list">
+            <div style={{ fontSize: "0.75rem", fontWeight: 600, marginBottom: 4 }}>
+              📊 {c.question || "Poll Question"}
+            </div>
+            {(c.options ?? []).map((opt: string, idx: number) => (
+              <div key={idx} className="flow-node-option-row">
+                <span className="flow-node-option-badge">⚪</span>
+                <span className="flow-node-option-title">{opt}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {node.type === "send_contact" && (
+          <div className="flow-node-summary">
+            <b>{c.name || "Contact"}</b> • {c.phone || "+..."}
+          </div>
+        )}
+        {node.type === "send_location" && (
+          <div className="flow-node-summary">
+            📍 <b>{c.name || "Location Pin"}</b>
+            {c.address && <div style={{ fontSize: "0.7rem", color: "var(--muted)" }}>{c.address}</div>}
+          </div>
+        )}
+        {node.type === "send_presence" && (
+          <div className="flow-node-summary">
+            Show <b>{c.presenceType || "typing"}</b> for {c.durationSeconds ?? 3}s
+          </div>
+        )}
+        {node.type === "mark_read" && (
+          <div className="flow-node-summary">
+            Send blue checkmarks (read receipt)
+          </div>
+        )}
+        {node.type === "react_message" && (
+          <div className="flow-node-summary">
+            React with <span style={{ fontSize: "1.2rem" }}>{c.emoji || "❤️"}</span>
+          </div>
+        )}
+        {node.type === "upsert_contact" && (
+          <div className="flow-node-summary">
+            Save contact: <b>{c.name || "Name"}</b> ({c.phone || "Phone"})
+          </div>
+        )}
+        {node.type === "block_contact" && (
+          <div className="flow-node-summary" style={{ color: "#dc2626" }}>
+            🚫 Block {c.phone || "user"}
+          </div>
+        )}
+        {node.type === "unblock_contact" && (
+          <div className="flow-node-summary" style={{ color: "#16a34a" }}>
+            🔓 Unblock {c.phone || "user"}
+          </div>
+        )}
+        {node.type === "add_group_participant" && (
+          <div className="flow-node-summary">
+            ➕ Add to {c.groupJid?.slice(0, 15) || "group"}…
+          </div>
+        )}
+        {node.type === "remove_group_participant" && (
+          <div className="flow-node-summary">
+            ➖ Remove from {c.groupJid?.slice(0, 15) || "group"}…
           </div>
         )}
         {node.type === "collect_input" && (
@@ -302,23 +552,41 @@ export function CustomWorkflowNode({ data, selected }: NodeProps<Node<GraphNodeD
               type="source"
               position={Position.Bottom}
               id="false"
-              style={{ left: "70%", background: "#ef4444", width: 10, height: 10 }}
+              style={{ left: "70%", background: "#f43f5e", width: 10, height: 10 }}
             />
           </div>
         </div>
       ) : node.type === "send_menu" ? (
-        <div className="flow-node-handles-bar flow-node-menu-handles">
+        <div className="flow-node-handles-bar">
           {(c.options ?? []).map((opt: any, idx: number) => {
-            const count = (c.options ?? []).length;
-            const leftPct = count <= 1 ? 50 : 20 + (idx * 60) / (count - 1);
+            const count = (c.options ?? []).length || 1;
+            const leftPct = `${Math.round(((idx + 0.5) / count) * 100)}%`;
             return (
               <div key={opt.id || idx} className="flow-node-handle-slot">
-                <span className="flow-handle-label">#{idx + 1}</span>
+                <span className="flow-handle-label">{idx + 1}</span>
                 <Handle
                   type="source"
                   position={Position.Bottom}
-                  id={opt.id}
-                  style={{ left: `${leftPct}%`, background: "#f59e0b", width: 9, height: 9 }}
+                  id={opt.id || String(idx + 1)}
+                  style={{ left: leftPct, background: "#f59e0b", width: 10, height: 10 }}
+                />
+              </div>
+            );
+          })}
+        </div>
+      ) : node.type === "send_poll" ? (
+        <div className="flow-node-handles-bar">
+          {(c.options ?? []).map((opt: string, idx: number) => {
+            const count = (c.options ?? []).length || 1;
+            const leftPct = `${Math.round(((idx + 0.5) / count) * 100)}%`;
+            return (
+              <div key={idx} className="flow-node-handle-slot">
+                <span className="flow-handle-label">{idx + 1}</span>
+                <Handle
+                  type="source"
+                  position={Position.Bottom}
+                  id={String(idx + 1)}
+                  style={{ left: leftPct, background: "#10b981", width: 10, height: 10 }}
                 />
               </div>
             );
@@ -327,16 +595,16 @@ export function CustomWorkflowNode({ data, selected }: NodeProps<Node<GraphNodeD
       ) : node.type === "split_test" ? (
         <div className="flow-node-handles-bar">
           {(c.variants ?? []).map((v: any, idx: number) => {
-            const count = (c.variants ?? []).length;
-            const leftPct = count <= 1 ? 50 : 25 + (idx * 50) / (count - 1);
+            const count = (c.variants ?? []).length || 1;
+            const leftPct = `${Math.round(((idx + 0.5) / count) * 100)}%`;
             return (
               <div key={v.id || idx} className="flow-node-handle-slot">
-                <span className="flow-handle-label">{v.id}</span>
+                <span className="flow-handle-label">{v.name || `Var ${idx + 1}`}</span>
                 <Handle
                   type="source"
                   position={Position.Bottom}
-                  id={v.id}
-                  style={{ left: `${leftPct}%`, background: "#6366f1", width: 9, height: 9 }}
+                  id={v.id || String(idx + 1)}
+                  style={{ left: leftPct, background: "#6366f1", width: 10, height: 10 }}
                 />
               </div>
             );
@@ -609,25 +877,43 @@ export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void 
           </ReactFlow>
         </div>
 
-        <aside className="side-panel">
+        <aside className="side-panel" style={{ maxHeight: "calc(100vh - 80px)", overflowY: "auto" }}>
           <div className="palette-header">
             <p className="panel-title">Add Step</p>
           </div>
-          <div className="palette-grid-flow">
-            {NODE_TYPES.map((t) => (
-              <button
-                key={t}
-                className="palette-btn-flow"
-                onClick={() => addNode(t)}
-                style={{ borderLeftColor: NODE_THEMES[t]?.border }}
+
+          {PALETTE_CATEGORIES.map((cat) => (
+            <div key={cat.title} style={{ marginBottom: "1rem" }}>
+              <div
+                style={{
+                  fontSize: "0.72rem",
+                  fontWeight: 700,
+                  color: "var(--muted)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.04em",
+                  marginBottom: "0.4rem",
+                }}
               >
-                <span style={{ fontSize: "1.1rem" }}>{NODE_ICONS[t]}</span>
-                <span>{NODE_LABELS[t]}</span>
-              </button>
-            ))}
-          </div>
+                {cat.title}
+              </div>
+              <div className="palette-grid-flow">
+                {cat.types.map((t) => (
+                  <button
+                    key={t}
+                    className="palette-btn-flow"
+                    onClick={() => addNode(t)}
+                    style={{ borderLeftColor: NODE_THEMES[t]?.border }}
+                  >
+                    <span style={{ fontSize: "1.1rem" }}>{NODE_ICONS[t]}</span>
+                    <span>{NODE_LABELS[t]}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
 
           <hr style={{ margin: "1rem 0", borderColor: "var(--border)" }} />
+
 
           {selectedEdge ? (
             <div className="config-section">
@@ -854,6 +1140,88 @@ function NodeConfig({
           </>
         )}
 
+        {(node.type === "trigger_personal" || node.type === "trigger_group") && (
+          <>
+            {node.type === "trigger_group" && (
+              <div>
+                {fieldLabel("Group JID (optional filter)", "cfg-group-jid")}
+                <input
+                  id="cfg-group-jid"
+                  className="input"
+                  placeholder="e.g. 12036302@g.us or leave empty for all groups"
+                  value={String(c.groupJid ?? "")}
+                  onChange={(e) => onChange({ config: { ...c, groupJid: e.target.value } })}
+                />
+              </div>
+            )}
+            {fieldLabel("Primary Match Phrase", "cfg-phrase")}
+            <input
+              id="cfg-phrase"
+              className="input"
+              placeholder='e.g. "join" or "support"'
+              value={String(c.phrase ?? "")}
+              onChange={(e) => onChange({ config: { ...c, phrase: e.target.value } })}
+            />
+          </>
+        )}
+
+        {node.type === "trigger_reaction" && (
+          <div>
+            {fieldLabel("Emoji Reaction Filter", "cfg-reaction-emoji")}
+            <input
+              id="cfg-reaction-emoji"
+              className="input"
+              placeholder="e.g. 👍 or ❤️ (leave empty for any emoji)"
+              value={String(c.emoji ?? "")}
+              onChange={(e) => onChange({ config: { ...c, emoji: e.target.value } })}
+            />
+            <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+              Fires when a recipient reacts to your message with this emoji.
+            </span>
+          </div>
+        )}
+
+        {node.type === "trigger_call" && (
+          <div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.85rem", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={Boolean(c.allowVideo ?? true)}
+                onChange={(e) => onChange({ config: { ...c, allowVideo: e.target.checked } })}
+              />
+              Trigger on Video calls as well as Voice calls
+            </label>
+          </div>
+        )}
+
+        {node.type === "trigger_participant" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <div>
+              {fieldLabel("Action Event", "cfg-part-action")}
+              <select
+                id="cfg-part-action"
+                className="select"
+                value={String(c.actionFilter ?? "add")}
+                onChange={(e) => onChange({ config: { ...c, actionFilter: e.target.value } })}
+              >
+                <option value="add">Member Joined / Added</option>
+                <option value="remove">Member Left / Removed</option>
+                <option value="all">Any Member Event</option>
+              </select>
+            </div>
+            <div>
+              {fieldLabel("Group JID (optional filter)", "cfg-part-group")}
+              <input
+                id="cfg-part-group"
+                className="input"
+                placeholder="123456789-group@g.us"
+                value={String(c.groupJid ?? "")}
+                onChange={(e) => onChange({ config: { ...c, groupJid: e.target.value } })}
+              />
+            </div>
+          </div>
+        )}
+
         {node.type === "send_text" && (
           <>
             {fieldLabel("Message Text", "cfg-text")}
@@ -979,7 +1347,297 @@ function NodeConfig({
           </div>
         )}
 
+        {node.type === "send_poll" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <div>
+              {fieldLabel("Poll Question", "cfg-poll-q")}
+              <VariablePills
+                onInsert={(tag) =>
+                  onChange({ config: { ...c, question: `${c.question ?? ""}${tag}` } })
+                }
+              />
+              <input
+                id="cfg-poll-q"
+                className="input"
+                placeholder="e.g. Which service are you interested in?"
+                value={String(c.question ?? "")}
+                onChange={(e) => onChange({ config: { ...c, question: e.target.value } })}
+              />
+            </div>
+
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <span className="field-label" style={{ margin: 0 }}>Options (Routed via handles)</span>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-ghost"
+                  onClick={() => {
+                    const opts = [...(c.options ?? [])];
+                    if (opts.length < 12) {
+                      opts.push(`Option ${opts.length + 1}`);
+                      onChange({ config: { ...c, options: opts } });
+                    }
+                  }}
+                >
+                  + Add Option
+                </button>
+              </div>
+
+              {(c.options ?? []).map((opt: string, idx: number) => (
+                <div key={idx} style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                  <input
+                    className="input"
+                    placeholder={`Option #${idx + 1}`}
+                    value={opt}
+                    onChange={(e) => {
+                      const opts = [...(c.options ?? [])];
+                      opts[idx] = e.target.value;
+                      onChange({ config: { ...c, options: opts } });
+                    }}
+                  />
+                  {(c.options ?? []).length > 2 && (
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost btn-danger"
+                      onClick={() => {
+                        const opts = (c.options ?? []).filter((_: any, i: number) => i !== idx);
+                        onChange({ config: { ...c, options: opts } });
+                      }}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.85rem", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={Boolean(c.multiSelect ?? false)}
+                onChange={(e) => onChange({ config: { ...c, multiSelect: e.target.checked } })}
+              />
+              Allow Multiple Selections
+            </label>
+          </div>
+        )}
+
+        {node.type === "send_contact" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <div>
+              {fieldLabel("Contact Full Name", "cfg-ct-name")}
+              <VariablePills
+                onInsert={(tag) =>
+                  onChange({ config: { ...c, name: `${c.name ?? ""}${tag}` } })
+                }
+              />
+              <input
+                id="cfg-ct-name"
+                className="input"
+                placeholder="e.g. Sales Support"
+                value={String(c.name ?? "")}
+                onChange={(e) => onChange({ config: { ...c, name: e.target.value } })}
+              />
+            </div>
+            <div>
+              {fieldLabel("Contact Phone (E.164)", "cfg-ct-phone")}
+              <input
+                id="cfg-ct-phone"
+                className="input"
+                placeholder="+1234567890"
+                value={String(c.phone ?? "")}
+                onChange={(e) => onChange({ config: { ...c, phone: e.target.value } })}
+              />
+            </div>
+          </div>
+        )}
+
+        {node.type === "send_location" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <div>
+              {fieldLabel("Location / Venue Name", "cfg-loc-name")}
+              <input
+                id="cfg-loc-name"
+                className="input"
+                placeholder="e.g. Headquarters"
+                value={String(c.name ?? "")}
+                onChange={(e) => onChange({ config: { ...c, name: e.target.value } })}
+              />
+            </div>
+            <div>
+              {fieldLabel("Address Line", "cfg-loc-addr")}
+              <input
+                id="cfg-loc-addr"
+                className="input"
+                placeholder="e.g. 100 Main St, City"
+                value={String(c.address ?? "")}
+                onChange={(e) => onChange({ config: { ...c, address: e.target.value } })}
+              />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <div>
+                {fieldLabel("Latitude", "cfg-loc-lat")}
+                <input
+                  id="cfg-loc-lat"
+                  className="input"
+                  type="number"
+                  step="any"
+                  placeholder="48.8584"
+                  value={num(c.latitude)}
+                  onChange={(e) => onChange({ config: { ...c, latitude: parseFloat(e.target.value) || 0 } })}
+                />
+              </div>
+              <div>
+                {fieldLabel("Longitude", "cfg-loc-lng")}
+                <input
+                  id="cfg-loc-lng"
+                  className="input"
+                  type="number"
+                  step="any"
+                  placeholder="2.2945"
+                  value={num(c.longitude)}
+                  onChange={(e) => onChange({ config: { ...c, longitude: parseFloat(e.target.value) || 0 } })}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {node.type === "send_presence" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <div>
+              {fieldLabel("Presence Simulation", "cfg-pres-type")}
+              <select
+                id="cfg-pres-type"
+                className="select"
+                value={String(c.presenceType ?? "composing")}
+                onChange={(e) => onChange({ config: { ...c, presenceType: e.target.value } })}
+              >
+                <option value="composing">⌨️ Typing indicator (composing)</option>
+                <option value="recording">🎙️ Recording audio (voice note)</option>
+                <option value="available">🟢 Mark Available (online)</option>
+                <option value="unavailable">⚪ Mark Unavailable (offline)</option>
+              </select>
+            </div>
+            <div>
+              {fieldLabel(`Duration: ${Number(c.durationSeconds ?? 3)} seconds`, "cfg-pres-sec")}
+              <input
+                id="cfg-pres-sec"
+                type="range"
+                min={1}
+                max={15}
+                style={{ width: "100%" }}
+                value={num(c.durationSeconds) || 3}
+                onChange={(e) => onChange({ config: { ...c, durationSeconds: Number(e.target.value) } })}
+              />
+            </div>
+          </div>
+        )}
+
+        {node.type === "mark_read" && (
+          <div style={{ padding: "0.75rem", background: "var(--surface-sunken)", borderRadius: "var(--radius-sm)", fontSize: "0.8rem" }}>
+            ✓✓ <b>Mark as Read</b> triggers WhatsApp blue checkmarks on the incoming message to assure the user their reply was seen.
+          </div>
+        )}
+
+        {node.type === "react_message" && (
+          <div>
+            {fieldLabel("Reaction Emoji", "cfg-react-emoji")}
+            <input
+              id="cfg-react-emoji"
+              className="input"
+              placeholder="e.g. ❤️, 👍, 🔥, 🎉"
+              value={String(c.emoji ?? "❤️")}
+              onChange={(e) => onChange({ config: { ...c, emoji: e.target.value } })}
+            />
+          </div>
+        )}
+
+        {node.type === "upsert_contact" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <div>
+              {fieldLabel("Contact Name", "cfg-upsert-name")}
+              <VariablePills
+                onInsert={(tag) =>
+                  onChange({ config: { ...c, name: `${c.name ?? ""}${tag}` } })
+                }
+              />
+              <input
+                id="cfg-upsert-name"
+                className="input"
+                placeholder="e.g. {{vars.customer_name}}"
+                value={String(c.name ?? "")}
+                onChange={(e) => onChange({ config: { ...c, name: e.target.value } })}
+              />
+            </div>
+            <div>
+              {fieldLabel("Phone Number", "cfg-upsert-phone")}
+              <VariablePills
+                onInsert={(tag) =>
+                  onChange({ config: { ...c, phone: `${c.phone ?? ""}${tag}` } })
+                }
+              />
+              <input
+                id="cfg-upsert-phone"
+                className="input"
+                placeholder="{{contact.phone}}"
+                value={String(c.phone ?? "{{contact.phone}}")}
+                onChange={(e) => onChange({ config: { ...c, phone: e.target.value } })}
+              />
+            </div>
+          </div>
+        )}
+
+        {(node.type === "block_contact" || node.type === "unblock_contact") && (
+          <div>
+            {fieldLabel("Phone Number to Block/Unblock", "cfg-block-phone")}
+            <VariablePills
+              onInsert={(tag) =>
+                onChange({ config: { ...c, phone: `${c.phone ?? ""}${tag}` } })
+              }
+            />
+            <input
+              id="cfg-block-phone"
+              className="input"
+              placeholder="{{contact.phone}}"
+              value={String(c.phone ?? "{{contact.phone}}")}
+              onChange={(e) => onChange({ config: { ...c, phone: e.target.value } })}
+            />
+          </div>
+        )}
+
+        {(node.type === "add_group_participant" || node.type === "remove_group_participant") && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <div>
+              {fieldLabel("Target Group JID", "cfg-grp-jid")}
+              <input
+                id="cfg-grp-jid"
+                className="input"
+                placeholder="123456789-group@g.us"
+                value={String(c.groupJid ?? "")}
+                onChange={(e) => onChange({ config: { ...c, groupJid: e.target.value } })}
+              />
+            </div>
+            <div>
+              {fieldLabel("Participant Phone", "cfg-grp-phone")}
+              <VariablePills
+                onInsert={(tag) =>
+                  onChange({ config: { ...c, phone: `${c.phone ?? ""}${tag}` } })
+                }
+              />
+              <input
+                id="cfg-grp-phone"
+                className="input"
+                placeholder="{{contact.phone}}"
+                value={String(c.phone ?? "{{contact.phone}}")}
+                onChange={(e) => onChange({ config: { ...c, phone: e.target.value } })}
+              />
+            </div>
+          </div>
+        )}
+
         {node.type === "collect_input" && (
+
           <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
             <div>
               {fieldLabel("Prompt Question", "cfg-input-prompt")}

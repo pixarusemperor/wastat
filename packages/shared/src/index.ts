@@ -10,3 +10,4 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue
 
 export * from "./matching.js";
 export * from "./types.js";
+export * from "./capabilities/registry.js";

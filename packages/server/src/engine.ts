@@ -293,6 +293,68 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
           exec.current_node_key = next.target_key;
           break;
         }
+        case "send_poll": {
+          const config = JSON.parse(node.config || "{}") as { question?: string; options?: string[]; multiSelect?: boolean };
+          const question = interpolateVariables(config.question ?? "Please vote:", vars, contact);
+          const pollText = `📊 *${question}*\n\n` + (config.options ?? []).map((o, i) => `${i + 1}. ${o}`).join("\n");
+          enqueueSend(executionId, exec.current_node_key, {
+            kind: "text",
+            text: pollText,
+          });
+          setWaitingInput(executionId, exec.current_node_key);
+          return;
+        }
+        case "send_contact": {
+          const config = JSON.parse(node.config || "{}") as { name?: string; phone?: string };
+          const name = interpolateVariables(config.name ?? "Support Contact", vars, contact);
+          const phone = interpolateVariables(config.phone ?? "", vars, contact);
+          const text = `📇 *Contact Card*\n*Name:* ${name}\n*Phone:* ${phone}`;
+          enqueueSend(executionId, exec.current_node_key, {
+            kind: "text",
+            text,
+          });
+          setWaiting(executionId, exec.current_node_key);
+          return;
+        }
+        case "send_location": {
+          const config = JSON.parse(node.config || "{}") as { latitude?: number; longitude?: number; name?: string; address?: string };
+          const name = config.name ? interpolateVariables(config.name, vars, contact) : "Location";
+          const addr = config.address ? interpolateVariables(config.address, vars, contact) : "";
+          const lat = config.latitude ?? 0;
+          const lng = config.longitude ?? 0;
+          const text = `📍 *${name}*\n${addr ? `${addr}\n` : ""}https://maps.google.com/?q=${lat},${lng}`;
+          enqueueSend(executionId, exec.current_node_key, {
+            kind: "text",
+            text,
+          });
+          setWaiting(executionId, exec.current_node_key);
+          return;
+        }
+        case "send_presence": {
+          const config = JSON.parse(node.config || "{}") as { presenceType?: string; durationSeconds?: number };
+          const sec = config.durationSeconds ?? 2;
+          scheduler.enqueue({
+            type: "resume",
+            executionId,
+            nodeKey: exec.current_node_key,
+            runAt: new Date(clock.now() + sec * 1000),
+            payload: { presence: config.presenceType ?? "composing" },
+          });
+          setWaiting(executionId, exec.current_node_key);
+          return;
+        }
+        case "mark_read":
+        case "react_message":
+        case "block_contact":
+        case "unblock_contact":
+        case "upsert_contact":
+        case "add_group_participant":
+        case "remove_group_participant": {
+          const next = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
+          if (!next) return complete(executionId, exec.current_node_key);
+          exec.current_node_key = next.target_key;
+          break;
+        }
         case "delay": {
           const config = (JSON.parse(node.config || "{}") ?? {}) as {
             mode?: "fixed" | "random";
@@ -330,7 +392,13 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
           exec.current_node_key = next.target_key;
           break;
         }
-        case "trigger": {
+        case "trigger":
+        case "trigger_personal":
+        case "trigger_group":
+        case "trigger_reaction":
+        case "trigger_poll_result":
+        case "trigger_call":
+        case "trigger_participant": {
           const next = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
           if (!next) return complete(executionId, exec.current_node_key);
           exec.current_node_key = next.target_key;
@@ -341,6 +409,7 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
         default:
           return complete(executionId, exec.current_node_key);
       }
+
     }
   }
 

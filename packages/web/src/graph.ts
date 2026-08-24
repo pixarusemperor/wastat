@@ -4,23 +4,16 @@
  * graph depth (BFS from the trigger), so saving never stores coordinates.
  */
 
+import type { WorkflowNodeType } from "@wastat/shared";
+
 export interface GraphNode {
   nodeKey: string;
-  type:
-    | "trigger"
-    | "keyword"
-    | "send_text"
-    | "send_media"
-    | "send_menu"
-    | "collect_input"
-    | "condition"
-    | "split_test"
-    | "delay"
-    | "end";
+  type: WorkflowNodeType;
   config: Record<string, unknown>;
   positionX?: number;
   positionY?: number;
 }
+
 
 export interface GraphEdge {
   sourceKey: string;

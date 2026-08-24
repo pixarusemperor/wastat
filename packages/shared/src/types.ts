@@ -83,14 +83,89 @@ export interface SplitTestNodeConfig {
   variants: SplitTestVariant[];
 }
 
-export type EndNodeConfig = Record<string, never>;
+export interface SendPollNodeConfig {
+  question: string;
+  options: string[];
+  multiSelect?: boolean;
+}
+
+export interface SendContactNodeConfig {
+  name: string;
+  phone: string;
+}
+
+export interface SendLocationNodeConfig {
+  latitude: number;
+  longitude: number;
+  name?: string;
+  address?: string;
+}
+
+export interface SendPresenceNodeConfig {
+  presenceType: "composing" | "recording" | "available" | "unavailable";
+  durationSeconds?: number;
+}
+
+export interface ReactMessageNodeConfig {
+  emoji: string;
+}
+
+export interface ContactActionNodeConfig {
+  phone?: string;
+  name?: string;
+}
+
+export interface GroupActionNodeConfig {
+  groupJid: string;
+  phone?: string;
+}
+
+export interface TriggerPersonalConfig extends TriggerNodeConfig {}
+
+export interface TriggerGroupConfig extends TriggerNodeConfig {
+  groupJid?: string;
+}
+
+export interface TriggerReactionConfig {
+  emoji?: string;
+}
+
+export interface TriggerCallConfig {
+  allowVideo?: boolean;
+}
+
+export interface TriggerParticipantConfig {
+  actionFilter?: "add" | "remove" | "all";
+  groupJid?: string;
+}
 
 export type WorkflowNodeType =
+  // Triggers
   | "trigger"
   | "keyword"
+  | "trigger_personal"
+  | "trigger_group"
+  | "trigger_reaction"
+  | "trigger_poll_result"
+  | "trigger_call"
+  | "trigger_participant"
+  // Messaging Actions
   | "send_text"
   | "send_media"
   | "send_menu"
+  | "send_poll"
+  | "send_contact"
+  | "send_location"
+  | "send_presence"
+  | "mark_read"
+  | "react_message"
+  // Contact & Group Actions
+  | "block_contact"
+  | "unblock_contact"
+  | "upsert_contact"
+  | "add_group_participant"
+  | "remove_group_participant"
+  // Flow Control
   | "collect_input"
   | "condition"
   | "split_test"
