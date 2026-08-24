@@ -125,14 +125,52 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
         return reply.code(404).send({ error: "Session not found" });
       }
 
-      const body = request.body as WasenderWebhook;
-      if (body.event !== "messages.received") return { ignored: body.event };
+      const body = request.body as Record<string, any>;
+      const eventName = body.event || "";
 
-      const key = body.data?.messages?.key;
+      // 1. Session Status Updates
+      if (eventName === "session.status" || eventName === "connection.update") {
+        const newStatus = body.data?.status || body.data?.state || "unknown";
+        db.prepare("UPDATE sessions SET status = ? WHERE id = ?").run(newStatus, session.id);
+        return { ok: true, handled: "session.status", status: newStatus };
+      }
+
+      // 2. Message Status Updates (Delivered, Read / Blue Ticks)
+      if (eventName === "messages.update" || eventName === "message_ack" || eventName === "message.update") {
+        const updates = Array.isArray(body.data) ? body.data : [body.data || {}];
+        for (const item of updates) {
+          const msgId = item.key?.id || item.id;
+          const statusRaw = item.update?.status || item.status;
+          let statusStr: string | null = null;
+          if (statusRaw === 3 || statusRaw === "delivered") statusStr = "delivered";
+          else if (statusRaw === 4 || statusRaw === "read") statusStr = "read";
+          else if (statusRaw === 2 || statusRaw === "sent") statusStr = "sent";
+
+          if (msgId && statusStr) {
+            db.prepare("UPDATE messages SET status = ? WHERE provider_message_id = ?").run(statusStr, msgId);
+            db.prepare(`
+              INSERT INTO events (event_type, session_id, message_id, data)
+              SELECT 'message.status_updated', ?, id, ? FROM messages WHERE provider_message_id = ?
+            `).run(session.id, JSON.stringify({ status: statusStr }), msgId);
+          }
+        }
+        return { ok: true, handled: "messages.update" };
+      }
+
+      // 3. Inbound Messages
+      const isMessageEvent =
+        eventName === "messages.received" ||
+        eventName === "messages-group.received" ||
+        eventName === "messages.upsert" ||
+        eventName === "message.received";
+
+      if (!isMessageEvent) return { ignored: eventName };
+
+      const key = body.data?.messages?.key || body.data?.key;
       if (!key?.id || !key.remoteJid) return { ignored: "malformed" };
 
       // Determine sender phone safely (preventing @lid corruption)
-      const isGroup = Boolean(key.remoteJid.endsWith("@g.us"));
+      const isGroup = Boolean(key.remoteJid.endsWith("@g.us") || eventName === "messages-group.received");
       const phone =
         key.cleanedSenderPn ||
         key.cleanedParticipantPn ||
@@ -162,15 +200,18 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
 
       // PRD §52: duplicate deliveries are dropped here — the UNIQUE constraint
       // on provider_message_id is the dedup key.
+      const messageBody = body.data?.messages?.messageBody ?? body.data?.message?.conversation ?? body.data?.messageBody ?? null;
+      const ts = body.timestamp ? new Date(body.timestamp * 1000).toISOString() : new Date().toISOString();
+
       try {
         upsertContact.run(phone, pushName);
         const contact = getContact.get(phone) as { id: number };
         insertMessage.run(
           session.id,
           contact.id,
-          body.data?.messages?.messageBody ?? null,
+          messageBody,
           key.id,
-          new Date(body.timestamp * 1000).toISOString(),
+          ts,
         );
       } catch {
         return { duplicate: true };

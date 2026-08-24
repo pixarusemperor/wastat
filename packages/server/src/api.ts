@@ -623,6 +623,28 @@ export function registerApiRoutes(
       }
     });
 
+    app.post<{ Params: { id: string }; Body: { webhookUrl?: string } }>(
+      "/api/sessions/:id/sync-webhook",
+      async (request, reply) => {
+        const localId = Number(request.params.id);
+        const row = db
+          .prepare("SELECT id, provider_session_id FROM sessions WHERE id = ?")
+          .get(localId) as { id: number; provider_session_id: string } | undefined;
+        if (!row) return reply.code(404).send({ error: "not found" });
+        try {
+          const base = process.env.PUBLIC_BASE_URL || "https://wassflow.orizongroup.online";
+          const targetUrl =
+            request.body?.webhookUrl ||
+            `${base.replace(/\/$/, "")}/webhooks/wasender/${row.provider_session_id}`;
+          await admin.updateWebhook(Number(row.provider_session_id), targetUrl);
+          return { ok: true, webhookUrl: targetUrl };
+        } catch (err) {
+          request.log.error(err);
+          return reply.code(502).send({ error: "Wasender update webhook failed", details: err });
+        }
+      },
+    );
+
     app.delete<{ Params: { id: string } }>("/api/sessions/:id", async (request, reply) => {
       const localId = Number(request.params.id);
       const row = db

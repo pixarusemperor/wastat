@@ -72,6 +72,19 @@ export function SessionsPage() {
     }
   }
 
+  async function handleSyncWebhook(s: SessionRow) {
+    setActionBusy(s.id);
+    try {
+      const url = `${window.location.origin}/webhooks/wasender/${s.providerSessionId}`;
+      await api.syncSessionWebhook(s.id, url);
+      alert(`Webhook auto-configured successfully on Wasender for "${s.name}" with full events enabled!`);
+    } catch (e) {
+      alert(`Failed to auto-configure webhook on Wasender: ${e}`);
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
   function copyWebhook(id: number, providerSessionId: string) {
     const url = `${window.location.origin}/webhooks/wasender/${providerSessionId}`;
     void navigator.clipboard.writeText(url);
@@ -226,6 +239,15 @@ export function SessionsPage() {
                     onClick={() => copyWebhook(s.id, s.providerSessionId)}
                   >
                     {copiedId === s.id ? "✓ Copied" : "Copy"}
+                  </button>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    style={{ padding: "0.125rem 0.5rem", fontSize: "0.75rem" }}
+                    disabled={actionBusy === s.id}
+                    onClick={() => void handleSyncWebhook(s)}
+                    title="Auto-register this webhook URL and enable all events on Wasender using your PAT"
+                  >
+                    {actionBusy === s.id ? "Configuring…" : "⚡ Auto-Set in Wasender"}
                   </button>
                 </div>
               </li>

@@ -46,6 +46,19 @@ export function makeWasenderAdmin(pat: string, fetchImpl: typeof fetch = fetch) 
     restartSession: (id: number) => call<unknown>("POST", `/whatsapp-sessions/${id}/restart`),
     disconnectSession: (id: number) => call<unknown>("POST", `/whatsapp-sessions/${id}/disconnect`),
     deleteSession: (id: number) => call<unknown>("DELETE", `/whatsapp-sessions/${id}`),
+    updateWebhook: (id: number, webhookUrl: string, webhookEvents?: string[]) =>
+      call<{ success: boolean; data?: unknown }>("PUT", `/whatsapp-sessions/${id}`, {
+        webhook_url: webhookUrl,
+        webhook_enabled: true,
+        webhook_events: webhookEvents ?? [
+          "messages.received",
+          "messages-group.received",
+          "messages.upsert",
+          "messages.update",
+          "session.status",
+          "presence.update",
+        ],
+      }),
   };
 }
 

@@ -221,6 +221,12 @@ export const api = {
     fetch(`/api/sessions/${id}/disconnect`, { method: "POST" }).then((r) =>
       json<{ ok: boolean }>(r),
     ),
+  syncSessionWebhook: (id: number, webhookUrl?: string) =>
+    fetch(`/api/sessions/${id}/sync-webhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(webhookUrl ? { webhookUrl } : {}),
+    }).then((r) => json<{ ok: boolean; webhookUrl: string }>(r)),
   deleteSession: (id: number) =>
     fetch(`/api/sessions/${id}`, { method: "DELETE" }).then((r) => json<{ ok: boolean }>(r)),
 
