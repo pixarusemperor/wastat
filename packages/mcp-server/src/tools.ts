@@ -57,4 +57,17 @@ export const TOOL_DEFINITIONS = [
       required: ["contactId", "body"],
     },
   },
+  {
+    name: "wastat_trigger_broadcast",
+    description: "Schedules a Cartesian group broadcast: every product × every target WhatsApp group becomes one queued dispatch.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        productIds: { type: "array", items: { type: "string" }, description: "IDs of the products to broadcast" },
+        groupIds: { type: "array", items: { type: "string" }, description: "WhatsApp group IDs (e.g. 120363…@g.us) to send to" },
+        template: { type: "string", description: "Optional message template; supports Spintax like {A|B} and {{product.name}} variables" },
+      },
+      required: ["productIds", "groupIds"],
+    },
+  },
 ] as const;

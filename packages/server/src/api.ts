@@ -754,42 +754,76 @@ export function registerApiRoutes(
     },
   );
 
-  // Multi-Stage Funnel & Variant Statistics Endpoint
+  // TASK-07: per-variant multi-stage funnel counts.
   app.get<{ Params: { id: string } }>("/api/experiments/:id/funnel", async (request, reply) => {
     const experimentId = Number(request.params.id);
-    const workflows = db.prepare("SELECT id, name FROM workflows WHERE experiment_id = ?").all(experimentId) as Array<{ id: number; name: string }>;
+    const exp = db.prepare("SELECT id FROM experiments WHERE id = ?").get(experimentId);
+    if (!exp) return reply.code(404).send({ error: "not found" });
+    const workflows = db
+      .prepare("SELECT id, name FROM workflows WHERE experiment_id = ? ORDER BY id ASC")
+      .all(experimentId) as Array<{ id: number; name: string }>;
 
-    const funnelStages = workflows.map((wf) => {
-      const stats = db.prepare(`
-        SELECT 
-          COUNT(DISTINCT we.id) AS totalExecutions,
-          COUNT(DISTINCT CASE WHEN m.direction = 'out' THEN m.contact_id END) AS totalSent,
-          COUNT(DISTINCT CASE WHEN m.direction = 'out' AND m.status IN ('delivered', 'read') THEN m.contact_id END) AS totalDelivered,
-          COUNT(DISTINCT CASE WHEN m.direction = 'out' AND m.status = 'read' THEN m.contact_id END) AS totalRead,
-          COUNT(DISTINCT CASE WHEN m_in.id IS NOT NULL AND m_in.timestamp <= we.reply_window_expires_at THEN m_in.contact_id END) AS organic2hReplies,
-          COUNT(DISTINCT CASE WHEN we.silence_sweep_executed = 1 AND m_in.id IS NOT NULL AND m_in.timestamp > we.reply_window_expires_at THEN m_in.contact_id END) AS silenceReactivations,
-          COUNT(DISTINCT fc.id) AS qualifiedConversions
-        FROM workflows w
-        LEFT JOIN workflow_executions we ON we.workflow_id = w.id
-        LEFT JOIN messages m ON m.workflow_execution_id = we.id
-        LEFT JOIN messages m_in ON m_in.in_reply_to_id = m.id
-        LEFT JOIN funnel_conversions fc ON fc.workflow_id = w.id
-        WHERE w.id = ?
-      `).get(wf.id) as Record<string, number>;
+    const variants = workflows.map((wf) => {
+      const row = db
+        .prepare(`
+          SELECT
+            (SELECT COUNT(DISTINCT we.contact_id) FROM workflow_executions we WHERE we.workflow_id = w.id) AS hookReached,
+            (SELECT COUNT(DISTINCT m.contact_id) FROM messages m
+               JOIN workflow_executions we ON we.id = m.workflow_execution_id
+              WHERE we.workflow_id = w.id AND m.direction = 'out' AND m.status IN ('delivered', 'read')) AS hookConverted,
+            (SELECT COUNT(*) FROM (
+               SELECT m.contact_id FROM messages m
+                 JOIN workflow_executions we ON we.id = m.workflow_execution_id
+                WHERE we.workflow_id = w.id AND m.direction = 'out'
+                GROUP BY m.contact_id HAVING COUNT(m.id) >= 2)) AS presentationSent,
+            (SELECT COUNT(DISTINCT r.contact_id) FROM messages r
+               JOIN messages o ON o.id = r.in_reply_to_id
+               JOIN workflow_executions we ON we.id = o.workflow_execution_id
+              WHERE we.workflow_id = w.id AND r.direction = 'in'
+                AND CAST(strftime('%s', r.timestamp) AS INTEGER) <= CAST(strftime('%s', o.timestamp) AS INTEGER) + 7200) AS replied2h,
+            (SELECT COUNT(DISTINCT fc.contact_id) FROM funnel_conversions fc WHERE fc.workflow_id = w.id) AS qualified,
+            (SELECT COUNT(DISTINCT we.contact_id) FROM workflow_executions we JOIN contacts c ON c.id = we.contact_id
+              WHERE we.workflow_id = w.id AND c.funnel_phase = 'phase_2_active') AS phase2Closed
+          FROM workflows w WHERE w.id = ?
+        `)
+        .get(wf.id) as Record<string, number>;
+
+      // Clamp each stage against the previous one so the funnel stays monotone.
+      const hookDelivered = { reached: row.hookReached ?? 0, converted: row.hookConverted ?? 0 };
+      const presentationSent = {
+        reached: hookDelivered.converted,
+        converted: Math.min(row.presentationSent ?? 0, hookDelivered.converted),
+      };
+      const replied2h = {
+        reached: presentationSent.converted,
+        converted: Math.min(row.replied2h ?? 0, presentationSent.converted),
+      };
+      const qualified = {
+        reached: replied2h.converted,
+        converted: Math.min(row.qualified ?? 0, replied2h.converted),
+      };
+      const phase2Closed = {
+        reached: qualified.converted,
+        converted: Math.min(row.phase2Closed ?? 0, qualified.converted),
+      };
 
       return {
         workflowId: wf.id,
         name: wf.name,
-        totalExecutions: stats.totalExecutions ?? 0,
-        totalSent: stats.totalSent ?? 0,
-        totalDelivered: stats.totalDelivered ?? 0,
-        totalRead: stats.totalRead ?? 0,
-        organic2hReplies: stats.organic2hReplies ?? 0,
-        silenceReactivations: stats.silenceReactivations ?? 0,
-        qualifiedConversions: stats.qualifiedConversions ?? 0,
+        stages: {
+          hook_delivered: hookDelivered,
+          presentation_sent: presentationSent,
+          replied_2h: replied2h,
+          qualified,
+          phase_2_closed: phase2Closed,
+        },
       };
     });
 
-    return { experimentId, variants: funnelStages };
+    return {
+      experimentId,
+      stages: ["hook_delivered", "presentation_sent", "replied_2h", "qualified", "phase_2_closed"],
+      variants,
+    };
   });
 }

@@ -4,9 +4,11 @@ import { WorkflowEditor } from "./WorkflowEditor";
 import { ExperimentsPage } from "./Experiments";
 import { InboxPage } from "./Inbox";
 import { SessionsPage } from "./Sessions";
+import { ProductsPage } from "./Products";
+import { BroadcastsPage } from "./Broadcasts";
 
 type Route =
-  | { page: "list" | "inbox" | "sessions" }
+  | { page: "list" | "inbox" | "sessions" | "products" | "broadcasts" }
   | { page: "experiments"; expId?: string | null }
   | { page: "editor"; id: string };
 
@@ -18,6 +20,8 @@ function currentRoute(): Route {
   if (exp) return { page: "experiments", expId: exp[1] ?? null };
   if (hash.startsWith("#/inbox")) return { page: "inbox" };
   if (hash.startsWith("#/sessions")) return { page: "sessions" };
+  if (hash.startsWith("#/products")) return { page: "products" };
+  if (hash.startsWith("#/broadcasts")) return { page: "broadcasts" };
   return { page: "list" };
 }
 
@@ -30,6 +34,8 @@ const TABS = [
   { hash: "#/experiments", label: "A/B Experiments", page: "experiments" },
   { hash: "#/inbox", label: "Inbox", page: "inbox" },
   { hash: "#/sessions", label: "Sessions", page: "sessions" },
+  { hash: "#/products", label: "Products", page: "products" },
+  { hash: "#/broadcasts", label: "Broadcasts", page: "broadcasts" },
 ] as const;
 
 export default function App() {
@@ -77,8 +83,10 @@ export default function App() {
           onSelectExperiment={(id) => navigate(id ? `#/experiments/${id}` : "#/experiments")}
         />
       )}
-      {route.page === "inbox" && <InboxPage />}
-      {route.page === "sessions" && <SessionsPage />}
+  {route.page === "inbox" && <InboxPage />}
+  {route.page === "sessions" && <SessionsPage />}
+  {route.page === "products" && <ProductsPage />}
+  {route.page === "broadcasts" && <BroadcastsPage />}
     </>
   );
 }

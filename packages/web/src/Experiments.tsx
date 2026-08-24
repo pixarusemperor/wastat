@@ -1,12 +1,22 @@
 import { useEffect, useRef, useState } from "react";
+import { recommendWinner, wilsonInterval } from "@wastat/shared";
 import {
   api,
   type ExperimentDetails,
+  type ExperimentFunnel,
   type ExperimentStats,
   type ExperimentSummary,
   type WorkflowSummary,
 } from "./api.js";
 import { Dialog, StatusPill } from "./ui.js";
+
+const FUNNEL_LABELS: Record<string, string> = {
+  hook_delivered: "Hook Delivered",
+  presentation_sent: "Presentation Sent",
+  replied_2h: "Replied (2h)",
+  qualified: "Qualified",
+  phase_2_closed: "Phase 2 Closed",
+};
 
 function normalCdf(x: number): number {
   const t = 1 / (1 + 0.2316419 * Math.abs(x));
@@ -59,6 +69,7 @@ export function ExperimentsPage({
   // Selected experiment details & stats
   const [activeExp, setActiveExp] = useState<ExperimentDetails | null>(null);
   const [activeStats, setActiveStats] = useState<ExperimentStats | null>(null);
+  const [activeFunnel, setActiveFunnel] = useState<ExperimentFunnel | null>(null);
   const [allWorkflows, setAllWorkflows] = useState<WorkflowSummary[]>([]);
   const [attaching, setAttaching] = useState(false);
   const [selectedWfToAttach, setSelectedWfToAttach] = useState<string>("");
@@ -81,12 +92,14 @@ export function ExperimentsPage({
 
   async function loadExperimentDetails(id: string | number) {
     try {
-      const [details, stats] = await Promise.all([
+      const [details, stats, funnel] = await Promise.all([
         api.getExperiment(id),
         api.getExperimentStats(id),
+        api.getExperimentFunnel(id).catch(() => null),
       ]);
       setActiveExp(details);
       setActiveStats(stats);
+      setActiveFunnel(funnel);
     } catch (e) {
       setError(String(e));
     }
@@ -475,6 +488,91 @@ export function ExperimentsPage({
                     </div>
                   )}
                 </div>
+
+                {/* Funnel & Winner (TASK-07) */}
+                {activeFunnel && activeFunnel.variants.length > 0 && (
+                  <div className="variants-section">
+                    <h3 style={{ margin: "0 0 1rem", fontSize: "1.125rem" }}>Funnel &amp; Winner</h3>
+                    {(() => {
+                      const winner = recommendWinner(
+                        activeFunnel.variants.map((v) => ({
+                          id: String(v.workflowId),
+                          conversions: v.stages.qualified?.converted ?? 0,
+                          trials: v.stages.hook_delivered?.reached ?? 0,
+                        })),
+                      );
+                      const winningVariant =
+                        winner.winnerId !== null
+                          ? activeFunnel.variants.find((v) => String(v.workflowId) === winner.winnerId)
+                          : undefined;
+                      return (
+                        <div
+                          style={{
+                            background: winner.isSignificant ? "var(--primary-soft)" : "var(--surface-sunken)",
+                            border: `1px solid ${winner.isSignificant ? "rgba(5, 150, 105, 0.3)" : "var(--border)"}`,
+                            borderRadius: "var(--radius-md)",
+                            padding: "1rem",
+                            marginBottom: "1rem",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                            gap: "0.75rem",
+                          }}
+                        >
+                          <div>
+                            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                              <strong style={{ fontSize: "0.9375rem" }}>
+                                {winningVariant ? `Recommended: ${winningVariant.name}` : "No winner yet"}
+                              </strong>
+                              <span
+                                className={`badge ${winner.isSignificant ? "badge-success" : "badge-neutral"}`}
+                                style={{ fontSize: "0.6875rem" }}
+                              >
+                                {winner.confidence > 0 ? `${winner.confidence}% Confidence` : "Collecting Data"}
+                              </span>
+                            </div>
+                            <p style={{ margin: "0.25rem 0 0", fontSize: "0.8125rem", color: "var(--text-muted)" }}>
+                              {winningVariant
+                                ? `${FUNNEL_LABELS.qualified} stage is significantly better (p < 0.05).`
+                                : "Collecting data — need ≥5 leads per variant and p < 0.05 on qualified conversions."}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    {activeFunnel.variants.map((v) => {
+                      const keys = Object.keys(v.stages);
+                      return (
+                        <div key={v.workflowId} style={{ marginBottom: "1rem" }}>
+                          <div style={{ fontWeight: 600, marginBottom: "0.5rem" }}>{v.name}</div>
+                          {keys.map((key) => {
+                            const { reached, converted } = v.stages[key];
+                            const rate = reached > 0 ? converted / reached : 0;
+                            const iv = wilsonInterval(converted, reached);
+                            return (
+                              <div key={key} className="rate-bar-cell" style={{ marginBottom: "0.375rem" }}>
+                                <span style={{ minWidth: "9.5rem", color: "var(--text-muted)", fontSize: "0.8125rem" }}>
+                                  {FUNNEL_LABELS[key] ?? key}
+                                </span>
+                                <div className="rate-bar-bg">
+                                  <div
+                                    className="rate-bar-fill"
+                                    title={`${Math.round(iv.low * 100)}%–${Math.round(iv.high * 100)}% Wilson 95% CI`}
+                                    style={{ width: `${Math.min(rate * 100, 100)}%` }}
+                                  />
+                                </div>
+                                <span className="rate-text">
+                                  {converted}/{reached}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -582,12 +680,13 @@ export function ExperimentsPage({
             className="modal-body"
             onSubmit={async (e) => {
               e.preventDefault();
-              await api.deleteExperiment(deleting.id);
-              if (activeExp?.id === deleting.id) {
-                setActiveExp(null);
-                setActiveStats(null);
-                onSelectExperiment(null);
-              }
+                await api.deleteExperiment(deleting.id);
+                if (activeExp?.id === deleting.id) {
+                  setActiveExp(null);
+                  setActiveStats(null);
+                  setActiveFunnel(null);
+                  onSelectExperiment(null);
+                }
               setDeleting(null);
               await refresh();
             }}

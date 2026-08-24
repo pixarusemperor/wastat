@@ -36,6 +36,18 @@ export function createMcpServer() {
         return {
           content: [{ type: "text", text: JSON.stringify({ stuckLeads: [] }) }],
         };
+      case "wastat_trigger_broadcast": {
+        const base = process.env.WASTAT_API_URL ?? "http://localhost:3000";
+        const res = await fetch(`${base}/api/broadcasts/schedule`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(args ?? {}),
+        });
+        const text = await res.text();
+        return {
+          content: [{ type: "text", text: res.ok ? text : `Broadcast scheduling failed: ${res.status} ${text}` }],
+        };
+      }
       default:
         return {
           content: [{ type: "text", text: `Tool ${name} executed successfully.` }],

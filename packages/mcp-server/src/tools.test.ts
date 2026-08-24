@@ -9,6 +9,7 @@ describe("WaStat MCP Tool Definitions", () => {
     expect(toolNames).toContain("wastat_send_operator_reply");
     expect(toolNames).toContain("wastat_advance_to_phase_2");
     expect(toolNames).toContain("wastat_create_private_note");
+    expect(toolNames).toContain("wastat_trigger_broadcast");
   });
 
   it("validates required input schemas", () => {
@@ -17,5 +18,8 @@ describe("WaStat MCP Tool Definitions", () => {
 
     const advanceTool = TOOL_DEFINITIONS.find((t) => t.name === "wastat_advance_to_phase_2");
     expect(advanceTool?.inputSchema.required).toEqual(["contactId"]);
+
+    const broadcastTool = TOOL_DEFINITIONS.find((t) => t.name === "wastat_trigger_broadcast");
+    expect(broadcastTool?.inputSchema.required).toEqual(["productIds", "groupIds"]);
   });
 });

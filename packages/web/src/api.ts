@@ -83,7 +83,64 @@ export interface ExperimentStats {
   variants: VariantStat[];
 }
 
+export interface FunnelStageCounts {
+  reached: number;
+  converted: number;
+}
+
+export interface FunnelVariant {
+  workflowId: number;
+  name: string;
+  stages: Record<string, FunnelStageCounts>;
+}
+
+export interface ExperimentFunnel {
+  experimentId: number;
+  stages: string[];
+  variants: FunnelVariant[];
+}
+
+export interface Product {
+  id: number;
+  name: string;
+  sku: string;
+  price: number | null;
+  description: string | null;
+  mediaUrl: string | null;
+}
+
+export interface BroadcastSummary {
+  id: number;
+  status: string;
+  productId: number;
+  groupId: string;
+  template: string | null;
+  scheduledAt: string;
+}
+
 export const api = {
+  listProducts: () => fetch("/api/products").then((r) => json<Product[]>(r)),
+  createProduct: (data: {
+    name: string;
+    sku: string;
+    price?: number | null;
+    description?: string | null;
+    mediaUrl?: string | null;
+  }) =>
+    fetch("/api/products", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }).then((r) => json<{ ok: boolean }>(r)),
+
+  listBroadcasts: () => fetch("/api/broadcasts").then((r) => json<BroadcastSummary[]>(r)),
+  scheduleBroadcast: (data: { productIds: string[]; groupIds: string[]; template?: string }) =>
+    fetch("/api/broadcasts/schedule", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }).then((r) => json<{ ok: boolean; scheduledDispatches: number }>(r)),
+
   listWorkflows: () => fetch("/api/workflows").then((r) => json<WorkflowSummary[]>(r)),
   getWorkflow: (id: string) => fetch(`/api/workflows/${id}`).then((r) => json<WorkflowGraph>(r)),
   createWorkflow: (name: string, experimentId?: number | null) =>
@@ -132,6 +189,8 @@ export const api = {
     fetch(`/api/experiments/${id}`, { method: "DELETE" }).then((r) => json<{ ok: boolean }>(r)),
   getExperimentStats: (id: string | number) =>
     fetch(`/api/experiments/${id}/stats`).then((r) => json<ExperimentStats>(r)),
+  getExperimentFunnel: (id: string | number) =>
+    fetch(`/api/experiments/${id}/funnel`).then((r) => json<ExperimentFunnel>(r)),
 
   listSessions: () =>
     fetch("/api/sessions").then((r) =>
