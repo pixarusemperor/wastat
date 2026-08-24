@@ -3,7 +3,18 @@ import type BetterSqlite3 from "better-sqlite3";
 import { makeWasenderAdmin, upsertSession } from "./wasender-admin.js";
 import type { createEngine } from "./engine.js";
 
-const NODE_TYPES = new Set(["trigger", "keyword", "send_text", "send_media", "delay", "end"]);
+const NODE_TYPES = new Set([
+  "trigger",
+  "keyword",
+  "send_text",
+  "send_media",
+  "send_menu",
+  "collect_input",
+  "condition",
+  "split_test",
+  "delay",
+  "end",
+]);
 
 export interface ApiRoutesOptions {
   wasenderPat?: string;
@@ -24,11 +35,14 @@ interface NodeInput {
   nodeKey: string;
   type: string;
   config: unknown;
+  positionX?: number;
+  positionY?: number;
 }
 
 interface EdgeInput {
   sourceKey: string;
   targetKey: string;
+  handle?: string;
 }
 
 interface ParsedGraph {
@@ -36,7 +50,7 @@ interface ParsedGraph {
   description: string | null;
   active: number;
   experimentId: number | null;
-  nodes: Array<{ nodeKey: string; type: string; config: unknown }>;
+  nodes: Array<{ nodeKey: string; type: string; config: unknown; positionX: number; positionY: number }>;
   edges: EdgeInput[];
 }
 
@@ -64,7 +78,12 @@ function parseGraph(body: unknown): { error: string } | { graph: ParsedGraph } {
       description: typeof b.description === "string" ? b.description : null,
       active: b.active === true ? 1 : 0,
       experimentId: typeof b.experimentId === "number" ? b.experimentId : null,
-      nodes: nodes.map((n) => ({ ...n, config: n.config ?? {} })),
+      nodes: nodes.map((n) => ({
+        ...n,
+        config: n.config ?? {},
+        positionX: typeof n.positionX === "number" ? n.positionX : 0,
+        positionY: typeof n.positionY === "number" ? n.positionY : 0,
+      })),
       edges: b.edges as EdgeInput[],
     },
   };
@@ -79,17 +98,21 @@ export function registerApiRoutes(
     "INSERT INTO workflows (name, description, active, experiment_id) VALUES (?, ?, ?, ?)",
   );
   const insertNode = db.prepare(
-    "INSERT INTO workflow_nodes (workflow_id, node_key, type, config) VALUES (?, ?, ?, ?)",
+    "INSERT INTO workflow_nodes (workflow_id, node_key, type, config, position_x, position_y) VALUES (?, ?, ?, ?, ?, ?)",
   );
   const insertEdge = db.prepare(
-    "INSERT INTO workflow_edges (workflow_id, source_key, target_key) VALUES (?, ?, ?)",
+    "INSERT INTO workflow_edges (workflow_id, source_key, target_key, handle) VALUES (?, ?, ?, ?)",
   );
 
   const saveGraph = db.transaction((workflowId: number, graph: ParsedGraph) => {
     db.prepare("DELETE FROM workflow_nodes WHERE workflow_id = ?").run(workflowId);
     db.prepare("DELETE FROM workflow_edges WHERE workflow_id = ?").run(workflowId);
-    for (const n of graph.nodes) insertNode.run(workflowId, n.nodeKey, n.type, JSON.stringify(n.config));
-    for (const e of graph.edges) insertEdge.run(workflowId, e.sourceKey, e.targetKey);
+    for (const n of graph.nodes) {
+      insertNode.run(workflowId, n.nodeKey, n.type, JSON.stringify(n.config), n.positionX, n.positionY);
+    }
+    for (const e of graph.edges) {
+      insertEdge.run(workflowId, e.sourceKey, e.targetKey, e.handle ?? null);
+    }
   });
 
   app.post("/api/workflows", async (request, reply) => {
@@ -112,11 +135,31 @@ export function registerApiRoutes(
       .get(request.params.id) as Record<string, unknown> | undefined;
     if (!wf) return reply.code(404).send({ error: "not found" });
     const nodes = (
-      db.prepare("SELECT node_key, type, config FROM workflow_nodes WHERE workflow_id = ? ORDER BY id").all(request.params.id) as any[]
-    ).map((n) => ({ nodeKey: n.node_key, type: n.type, config: JSON.parse(n.config) }));
+      db.prepare("SELECT node_key, type, config, position_x, position_y FROM workflow_nodes WHERE workflow_id = ? ORDER BY id").all(request.params.id) as any[]
+    ).map((n) => {
+      const nodeObj: any = {
+        nodeKey: n.node_key,
+        type: n.type,
+        config: JSON.parse(n.config),
+      };
+      if (n.position_x || n.position_y) {
+        nodeObj.positionX = n.position_x;
+        nodeObj.positionY = n.position_y;
+      }
+      return nodeObj;
+    });
     const edges = (
-      db.prepare("SELECT source_key, target_key FROM workflow_edges WHERE workflow_id = ? ORDER BY id").all(request.params.id) as any[]
-    ).map((e) => ({ sourceKey: e.source_key, targetKey: e.target_key }));
+      db.prepare("SELECT source_key, target_key, handle FROM workflow_edges WHERE workflow_id = ? ORDER BY id").all(request.params.id) as any[]
+    ).map((e) => {
+      const edgeObj: any = {
+        sourceKey: e.source_key,
+        targetKey: e.target_key,
+      };
+      if (e.handle) {
+        edgeObj.handle = e.handle;
+      }
+      return edgeObj;
+    });
     return { ...wf, nodes, edges };
   });
 

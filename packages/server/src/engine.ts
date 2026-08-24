@@ -1,6 +1,15 @@
 import type BetterSqlite3 from "better-sqlite3";
-import { evaluateMatch, normalize, type KeywordMatchConfig } from "@wastat/shared";
+import {
+  evaluateMatch,
+  normalize,
+  type KeywordMatchConfig,
+  type ConditionNodeConfig,
+  type SendMenuNodeConfig,
+  type CollectInputNodeConfig,
+  type SplitTestNodeConfig,
+} from "@wastat/shared";
 import { realClock, createScheduler, type Clock, type JobRow } from "./scheduler.js";
+import { buildTextMenu } from "./wasender.js";
 
 export interface SendMessageInput {
   sessionId: number;
@@ -17,6 +26,78 @@ export interface EngineDeps {
   sendMessage: (input: SendMessageInput) => Promise<{ providerMessageId: string }>;
 }
 
+/**
+ * Interpolates {{vars.key}}, {{contact.phone}}, {{contact.name}} templates.
+ */
+export function interpolateVariables(
+  template: string,
+  vars: Record<string, unknown> = {},
+  contact?: { phone?: string; name?: string },
+): string {
+  if (!template) return "";
+  return template.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_, key) => {
+    if (key.startsWith("vars.")) {
+      const varName = key.slice(5);
+      return vars[varName] != null ? String(vars[varName]) : "";
+    }
+    if (key.startsWith("contact.")) {
+      const contactKey = key.slice(8);
+      if (contactKey === "phone") return contact?.phone ?? "";
+      if (contactKey === "name") return contact?.name ?? "";
+    }
+    return vars[key] != null ? String(vars[key]) : "";
+  });
+}
+
+/**
+ * Evaluates branching condition predicates.
+ */
+export function evaluateCondition(
+  config: ConditionNodeConfig,
+  vars: Record<string, unknown> = {},
+  triggerText = "",
+  contact?: { phone?: string; name?: string },
+): boolean {
+  let targetVal = "";
+  if (config.subject === "var" && config.subjectKey) {
+    targetVal = vars[config.subjectKey] != null ? String(vars[config.subjectKey]) : "";
+  } else if (config.subject === "message_text") {
+    targetVal = triggerText;
+  } else if (config.subject === "contact_field" && config.subjectKey) {
+    if (config.subjectKey === "phone") targetVal = contact?.phone ?? "";
+    if (config.subjectKey === "name") targetVal = contact?.name ?? "";
+  }
+
+  const expected = config.value ?? "";
+  const normTarget = targetVal.trim().toLowerCase();
+  const normExpected = expected.trim().toLowerCase();
+
+  switch (config.operator) {
+    case "equals":
+      return normTarget === normExpected;
+    case "contains":
+      return normTarget.includes(normExpected);
+    case "starts_with":
+      return normTarget.startsWith(normExpected);
+    case "present":
+      return normTarget.length > 0;
+    case "absent":
+      return normTarget.length === 0;
+    case "greater_than": {
+      const numT = parseFloat(targetVal);
+      const numE = parseFloat(expected);
+      return !isNaN(numT) && !isNaN(numE) && numT > numE;
+    }
+    case "less_than": {
+      const numT = parseFloat(targetVal);
+      const numE = parseFloat(expected);
+      return !isNaN(numT) && !isNaN(numE) && numT < numE;
+    }
+    default:
+      return false;
+  }
+}
+
 export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
   const clock = deps.clock ?? realClock;
   const rng = deps.rng ?? Math.random;
@@ -26,7 +107,10 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
   const getWorkflow = db.prepare("SELECT * FROM workflows WHERE id = ?");
   const getNode = db.prepare("SELECT * FROM workflow_nodes WHERE workflow_id = ? AND node_key = ?");
   const getNextKey = db.prepare(
-    "SELECT target_key FROM workflow_edges WHERE workflow_id = ? AND source_key = ?",
+    "SELECT target_key FROM workflow_edges WHERE workflow_id = ? AND source_key = ? AND (handle IS NULL OR handle = '') LIMIT 1",
+  );
+  const getEdgeByHandle = db.prepare(
+    "SELECT target_key FROM workflow_edges WHERE workflow_id = ? AND source_key = ? AND handle = ? LIMIT 1",
   );
   const getTriggerNode = db.prepare(
     "SELECT node_key FROM workflow_nodes WHERE workflow_id = ? AND type = 'trigger'",
@@ -39,10 +123,13 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
     "SELECT id FROM workflow_executions WHERE trigger_message_id = ?",
   );
   const insertExecution = db.prepare(
-    "INSERT INTO workflow_executions (workflow_id, session_id, contact_id, trigger_message_id, status, current_node_key) VALUES (?, ?, ?, ?, 'running', ?)",
+    "INSERT INTO workflow_executions (workflow_id, session_id, contact_id, trigger_message_id, status, current_node_key, vars) VALUES (?, ?, ?, ?, 'running', ?, ?)",
   );
   const updateExecution = db.prepare(
     "UPDATE workflow_executions SET status = ?, current_node_key = ?, finished_at = ? WHERE id = ?",
+  );
+  const updateExecutionVars = db.prepare(
+    "UPDATE workflow_executions SET vars = ? WHERE id = ?",
   );
 
   function complete(executionId: number, currentKey: string | null) {
@@ -57,7 +144,11 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
     updateExecution.run("waiting", currentKey, null, executionId);
   }
 
-  const getContactPhone = db.prepare("SELECT phone FROM contacts WHERE id = ?");
+  function setWaitingInput(executionId: number, currentKey: string) {
+    updateExecution.run("waiting_input", currentKey, null, executionId);
+  }
+
+  const getContact = db.prepare("SELECT phone, name FROM contacts WHERE id = ?");
   const insertMessage = db.prepare(`
     INSERT INTO messages (session_id, contact_id, direction, message_type, text, provider_message_id, workflow_execution_id, node_key, status, timestamp)
     VALUES (?, ?, 'out', ?, ?, ?, ?, ?, 'sent', ?)
@@ -65,15 +156,26 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
 
   const getExecution = db.prepare("SELECT * FROM workflow_executions WHERE id = ?");
 
-  /**
-   * Walk the graph from the execution's current node until the path blocks on
-   * a queued job (send/delay) or terminates (end / dead end / no-match).
-   */
   async function step(executionId: number): Promise<void> {
     const exec = getExecution.get(executionId) as
-      | { id: number; workflow_id: number; session_id: number; status: string; current_node_key: string | null }
+      | {
+          id: number;
+          workflow_id: number;
+          session_id: number;
+          contact_id: number;
+          status: string;
+          current_node_key: string | null;
+          vars: string;
+        }
       | undefined;
     if (!exec || exec.status !== "running") return;
+
+    let vars: Record<string, unknown> = {};
+    try {
+      vars = JSON.parse(exec.vars || "{}");
+    } catch {}
+
+    const contact = getContact.get(exec.contact_id) as { phone?: string; name?: string } | undefined;
 
     while (true) {
       if (!exec.current_node_key) return complete(executionId, null);
@@ -83,19 +185,116 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
       if (!node) return complete(executionId, exec.current_node_key);
 
       switch (node.type) {
-        case "send_text":
-        case "send_media": {
-          const config = JSON.parse(node.config) as { text?: string; mediaId?: number };
+        case "send_text": {
+          const config = JSON.parse(node.config || "{}") as { text?: string };
+          const interpolated = interpolateVariables(config.text ?? "", vars, contact);
           enqueueSend(executionId, exec.current_node_key, {
-            kind: node.type === "send_media" ? "media" : "text",
-            text: config.text,
+            kind: "text",
+            text: interpolated,
+          });
+          setWaiting(executionId, exec.current_node_key);
+          return;
+        }
+        case "send_media": {
+          const config = JSON.parse(node.config || "{}") as { text?: string; caption?: string; mediaId?: number };
+          const rawCaption = config.caption ?? config.text;
+          const caption = rawCaption ? interpolateVariables(rawCaption, vars, contact) : undefined;
+          enqueueSend(executionId, exec.current_node_key, {
+            kind: "media",
+            text: caption,
             mediaId: config.mediaId,
           });
           setWaiting(executionId, exec.current_node_key);
           return;
         }
+        case "send_menu": {
+          const config = JSON.parse(node.config || "{}") as SendMenuNodeConfig;
+          const bodyText = interpolateVariables(config.bodyText ?? "", vars, contact);
+          const menuText = buildTextMenu(config.header, bodyText, config.options ?? [], config.footer);
+          enqueueSend(executionId, exec.current_node_key, {
+            kind: "text",
+            text: menuText,
+          });
+          setWaitingInput(executionId, exec.current_node_key);
+          return;
+        }
+        case "collect_input": {
+          const config = JSON.parse(node.config || "{}") as CollectInputNodeConfig;
+          const prompt = interpolateVariables(config.promptText ?? "", vars, contact);
+          if (prompt.trim()) {
+            enqueueSend(executionId, exec.current_node_key, {
+              kind: "text",
+              text: prompt,
+            });
+          }
+          setWaitingInput(executionId, exec.current_node_key);
+          return;
+        }
+        case "condition": {
+          const config = JSON.parse(node.config || "{}") as ConditionNodeConfig;
+          const triggerText = (getTriggerText.get(executionId) as { text: string | null } | undefined)?.text ?? "";
+          const isTrue = evaluateCondition(config, vars, triggerText, contact);
+
+          const branchHandle = isTrue ? "true" : "false";
+          const edge = getEdgeByHandle.get(exec.workflow_id, exec.current_node_key, branchHandle) as
+            | { target_key: string }
+            | undefined;
+
+          if (edge) {
+            exec.current_node_key = edge.target_key;
+            db.prepare("UPDATE workflow_executions SET current_node_key = ? WHERE id = ?").run(
+              edge.target_key,
+              executionId,
+            );
+            break;
+          } else {
+            const defEdge = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
+            if (defEdge) {
+              exec.current_node_key = defEdge.target_key;
+              break;
+            }
+            return complete(executionId, exec.current_node_key);
+          }
+        }
+        case "split_test": {
+          const config = JSON.parse(node.config || "{}") as SplitTestNodeConfig;
+          const variants = config.variants ?? [];
+          if (variants.length === 0) {
+            const next = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
+            if (!next) return complete(executionId, exec.current_node_key);
+            exec.current_node_key = next.target_key;
+            break;
+          }
+
+          const totalWeight = variants.reduce((sum, v) => sum + (v.weight || 1), 0);
+          let random = rng() * totalWeight;
+          let selected = variants[0];
+          for (const v of variants) {
+            random -= v.weight || 1;
+            if (random <= 0) {
+              selected = v;
+              break;
+            }
+          }
+
+          vars.split_variant = selected.id;
+          updateExecutionVars.run(JSON.stringify(vars), executionId);
+
+          const edge = getEdgeByHandle.get(exec.workflow_id, exec.current_node_key, selected.id) as
+            | { target_key: string }
+            | undefined;
+
+          if (edge) {
+            exec.current_node_key = edge.target_key;
+            break;
+          }
+          const next = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
+          if (!next) return complete(executionId, exec.current_node_key);
+          exec.current_node_key = next.target_key;
+          break;
+        }
         case "delay": {
-          const config = (JSON.parse(node.config) ?? {}) as {
+          const config = (JSON.parse(node.config || "{}") ?? {}) as {
             mode?: "fixed" | "random";
             seconds?: number;
             delayMs?: number;
@@ -122,16 +321,20 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
           return;
         }
         case "keyword": {
-          const config = JSON.parse(node.config) as KeywordMatchConfig;
+          const config = JSON.parse(node.config || "{}") as KeywordMatchConfig;
           const triggerText = getTriggerText.get(executionId) as { text: string | null } | undefined;
           const { matched } = evaluateMatch(config, triggerText?.text ?? "");
           if (!matched) return complete(executionId, exec.current_node_key);
-          const next = getNextKey.get(exec.workflow_id, exec.current_node_key) as
-            | { target_key: string }
-            | undefined;
+          const next = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
           if (!next) return complete(executionId, exec.current_node_key);
           exec.current_node_key = next.target_key;
-          break; // keep walking
+          break;
+        }
+        case "trigger": {
+          const next = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
+          if (!next) return complete(executionId, exec.current_node_key);
+          exec.current_node_key = next.target_key;
+          break;
         }
         case "end":
           return complete(executionId, exec.current_node_key);
@@ -141,14 +344,23 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
     }
   }
 
-  /** Advance past the node a completed job belonged to, then keep walking. */
-  function advanceFrom(executionId: number, nodeKey: string): void {
+  function advanceFrom(executionId: number, nodeKey: string, handle?: string): void {
     const exec = getExecution.get(executionId) as { workflow_id: number } | undefined;
     if (!exec) return;
-    const next = getNextKey.get(exec.workflow_id, nodeKey) as { target_key: string } | undefined;
-    if (!next) return complete(executionId, null);
+
+    let targetKey: string | null = null;
+    if (handle) {
+      const edge = getEdgeByHandle.get(exec.workflow_id, nodeKey, handle) as { target_key: string } | undefined;
+      if (edge) targetKey = edge.target_key;
+    }
+    if (!targetKey) {
+      const next = getNextKey.get(exec.workflow_id, nodeKey) as { target_key: string } | undefined;
+      if (next) targetKey = next.target_key;
+    }
+
+    if (!targetKey) return complete(executionId, null);
     db.prepare("UPDATE workflow_executions SET status = 'running', current_node_key = ?, finished_at = NULL WHERE id = ?").run(
-      next.target_key,
+      targetKey,
       executionId,
     );
     void step(executionId);
@@ -172,11 +384,12 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
     "SELECT workflow_id, config FROM workflow_nodes WHERE type IN ('keyword', 'trigger')",
   );
 
-  /**
-   * PRD §17: route one incoming message across all active workflows.
-   * Winner: highest similarity → highest configured priority → lowest workflow id.
-   * Returns the new execution id, or null when nothing matches.
-   */
+  const getWaitingExecution = db.prepare(`
+    SELECT * FROM workflow_executions
+    WHERE session_id = ? AND contact_id = ? AND status = 'waiting_input'
+    ORDER BY id DESC LIMIT 1
+  `);
+
   function handleIncomingMessage(
     sessionId: number,
     contactId: number,
@@ -185,7 +398,69 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
     const msg = db
       .prepare("SELECT text FROM messages WHERE id = ?")
       .get(messageId) as { text: string | null } | undefined;
-    if (!msg) return null;
+    if (!msg || !msg.text) return null;
+
+    const rawInbound = msg.text.trim();
+
+    const suspended = getWaitingExecution.get(sessionId, contactId) as
+      | {
+          id: number;
+          workflow_id: number;
+          current_node_key: string;
+          vars: string;
+        }
+      | undefined;
+
+    if (suspended && suspended.current_node_key) {
+      const node = getNode.get(suspended.workflow_id, suspended.current_node_key) as
+        | { type: string; config: string }
+        | undefined;
+
+      if (node) {
+        let vars: Record<string, unknown> = {};
+        try {
+          vars = JSON.parse(suspended.vars || "{}");
+        } catch {}
+
+        if (node.type === "collect_input") {
+          const config = JSON.parse(node.config || "{}") as CollectInputNodeConfig;
+          if (config.varKey) {
+            vars[config.varKey] = rawInbound;
+            updateExecutionVars.run(JSON.stringify(vars), suspended.id);
+          }
+          advanceFrom(suspended.id, suspended.current_node_key);
+          return suspended.id;
+        }
+
+        if (node.type === "send_menu") {
+          const config = JSON.parse(node.config || "{}") as SendMenuNodeConfig;
+          const options = config.options ?? [];
+
+          let matchedOption: { id: string; title: string } | null = null;
+          const num = parseInt(rawInbound, 10);
+          if (!isNaN(num) && num >= 1 && num <= options.length) {
+            matchedOption = options[num - 1];
+          } else {
+            const normIn = rawInbound.toLowerCase();
+            matchedOption =
+              options.find(
+                (opt) =>
+                  opt.id.toLowerCase() === normIn ||
+                  opt.title.toLowerCase() === normIn ||
+                  opt.title.toLowerCase().includes(normIn),
+              ) ?? null;
+          }
+
+          if (matchedOption) {
+            vars.selected_option = matchedOption.id;
+            vars.selected_option_title = matchedOption.title;
+            updateExecutionVars.run(JSON.stringify(vars), suspended.id);
+            advanceFrom(suspended.id, suspended.current_node_key, matchedOption.id);
+            return suspended.id;
+          }
+        }
+      }
+    }
 
     const active = new Set((getActiveWorkflows.all() as Array<{ id: number }>).map((w) => w.id));
     let best: { workflowId: number; score: number; priority: number } | null = null;
@@ -198,7 +473,7 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
         continue;
       }
 
-      const algorithm: MatchAlgorithm =
+      const algorithm =
         rawConfig.algorithm === "exact" || rawConfig.mode === "exact"
           ? "exact"
           : rawConfig.algorithm === "levenshtein"
@@ -265,9 +540,6 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
     }
     if (!best) return null;
 
-    // PRD §30–31: within an experiment, contacts are distributed across
-    // active variants (least-assigned first, ties by lowest id) and then
-    // stick to that variant for every future message in the experiment.
     let targetWorkflowId = best.workflowId;
     const expId = (
       db.prepare("SELECT experiment_id FROM workflows WHERE id = ?").get(best.workflowId) as {
@@ -298,7 +570,7 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
         targetWorkflowId = pick.id;
         db.prepare(
           "INSERT INTO experiment_assignments (experiment_id, contact_id, workflow_id) VALUES (?, ?, ?)",
-        ).run(expId, contactId, pick.id);
+        ).run(expId, contactId, targetWorkflowId);
       }
     }
 
@@ -334,13 +606,16 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
     },
     async executeJob(job: JobRow) {
       if (job.type === "resume") {
+        db.prepare("UPDATE workflow_executions SET status = 'running' WHERE id = ?").run(job.execution_id);
         if (job.node_key) advanceFrom(job.execution_id, job.node_key);
         return;
       }
 
       const payload = JSON.parse(job.payload) as { kind: "text" | "media"; text?: string; mediaId?: number };
-      const exec = getExecution.get(job.execution_id) as { session_id: number; contact_id: number };
-      const contact = getContactPhone.get(exec.contact_id) as { phone: string };
+      const exec = getExecution.get(job.execution_id) as { session_id: number; contact_id: number } | undefined;
+      if (!exec) return;
+      const contact = getContact.get(exec.contact_id) as { phone: string; name?: string } | undefined;
+      if (!contact) return;
 
       const result = await deps.sendMessage({
         sessionId: exec.session_id,
@@ -349,6 +624,7 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
         text: payload.text,
         mediaId: payload.mediaId,
       });
+
       insertMessage.run(
         exec.session_id,
         exec.contact_id,
@@ -359,18 +635,37 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
         job.node_key,
         iso(clock.now()),
       );
+
+      const currentExec = getExecution.get(job.execution_id) as { status: string } | undefined;
+      if (currentExec && currentExec.status === "waiting_input") {
+        return;
+      }
+
+      db.prepare("UPDATE workflow_executions SET status = 'running' WHERE id = ?").run(job.execution_id);
       if (job.node_key) advanceFrom(job.execution_id, job.node_key);
     },
-    startExecution(workflowId: number, sessionId: number, contactId: number, triggerMessageId?: number): number | null {
+    startExecution(
+      workflowId: number,
+      sessionId: number,
+      contactId: number,
+      triggerMessageId?: number,
+      initialVars: Record<string, unknown> = {},
+    ): number | null {
       const wf = getWorkflow.get(workflowId) as { active: number } | undefined;
       if (!wf?.active) return null;
       const trigger = getTriggerNode.get(workflowId) as { node_key: string } | undefined;
       if (!trigger) return null;
       const first = getNextKey.get(workflowId, trigger.node_key) as { target_key: string } | undefined;
       if (!first) return null;
-      // PRD §53: a duplicate webhook delivery must not re-trigger the workflow.
       if (triggerMessageId != null && findExecutionByTrigger.get(triggerMessageId)) return null;
-      const info = insertExecution.run(workflowId, sessionId, contactId, triggerMessageId ?? null, first.target_key);
+      const info = insertExecution.run(
+        workflowId,
+        sessionId,
+        contactId,
+        triggerMessageId ?? null,
+        first.target_key,
+        JSON.stringify(initialVars),
+      );
       const executionId = Number(info.lastInsertRowid);
       void step(executionId);
       return executionId;
@@ -379,5 +674,5 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
 
   const scheduler = createScheduler(db, engine.executeJob, clock);
 
-  return { ...engine, handleIncomingMessage, scheduler };
+  return { ...engine, handleIncomingMessage, scheduler, step };
 }

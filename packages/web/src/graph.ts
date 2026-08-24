@@ -6,13 +6,26 @@
 
 export interface GraphNode {
   nodeKey: string;
-  type: "trigger" | "keyword" | "send_text" | "send_media" | "delay" | "end";
+  type:
+    | "trigger"
+    | "keyword"
+    | "send_text"
+    | "send_media"
+    | "send_menu"
+    | "collect_input"
+    | "condition"
+    | "split_test"
+    | "delay"
+    | "end";
   config: Record<string, unknown>;
+  positionX?: number;
+  positionY?: number;
 }
 
 export interface GraphEdge {
   sourceKey: string;
   targetKey: string;
+  handle?: string;
 }
 
 export interface WorkflowGraph {
@@ -40,10 +53,12 @@ export interface FlowEdge {
   id: string;
   source: string;
   target: string;
+  sourceHandle?: string | null;
+  targetHandle?: string | null;
 }
 
-const COL_WIDTH = 280;
-const ROW_HEIGHT = 120;
+const COL_WIDTH = 320;
+const ROW_HEIGHT = 160;
 
 /** BFS depth from the trigger (roots when no trigger exists). */
 function depths(nodes: GraphNode[], edges: GraphEdge[]): Map<string, number> {
@@ -54,7 +69,7 @@ function depths(nodes: GraphNode[], edges: GraphEdge[]): Map<string, number> {
   const depth = new Map<string, number>();
   const queue: string[] = [];
   for (const n of nodes) {
-    if (!(incoming.get(n.nodeKey)?.length)) {
+    if (!incoming.get(n.nodeKey)?.length) {
       depth.set(n.nodeKey, 0);
       queue.push(n.nodeKey);
     }
@@ -70,7 +85,6 @@ function depths(nodes: GraphNode[], edges: GraphEdge[]): Map<string, number> {
       }
     }
   }
-  // Disconnected / loop-isolated nodes get depth 0 so they're visible.
   for (const n of nodes) {
     if (!depth.has(n.nodeKey)) depth.set(n.nodeKey, 0);
   }
@@ -87,26 +101,41 @@ export function toFlow(graph: WorkflowGraph): { nodes: FlowNode[]; edges: FlowEd
     return {
       id: n.nodeKey,
       type: "workflow",
-      position: { x: col * COL_WIDTH, y: row * ROW_HEIGHT },
+      position: {
+        x: n.positionX || col * COL_WIDTH,
+        y: n.positionY || row * ROW_HEIGHT,
+      },
       data: { graphNode: n },
     };
   });
   const edges = graph.edges.map((e) => ({
-    id: `${e.sourceKey}->${e.targetKey}`,
+    id: `${e.sourceKey}${e.handle ? `[${e.handle}]` : ""}->${e.targetKey}`,
     source: e.sourceKey,
     target: e.targetKey,
+    sourceHandle: e.handle ?? null,
   }));
   return { nodes, edges };
 }
 
 export function fromFlow(
-  flow: { nodes: Array<{ id: string; data: GraphNodeData }>; edges: Array<{ source: string; target: string }> },
+  flow: {
+    nodes: Array<{ id: string; position?: { x: number; y: number }; data: GraphNodeData }>;
+    edges: Array<{ source: string; target: string; sourceHandle?: string | null }>;
+  },
   meta: { name: string; description: string | null; active: number; experimentId?: number | null },
 ): { name: string; description: string | null; active: number; experimentId: number | null; nodes: GraphNode[]; edges: GraphEdge[] } {
   return {
     ...meta,
     experimentId: meta.experimentId ?? null,
-    nodes: flow.nodes.map((n) => n.data.graphNode),
-    edges: flow.edges.map((e) => ({ sourceKey: e.source, targetKey: e.target })),
+    nodes: flow.nodes.map((n) => ({
+      ...n.data.graphNode,
+      ...(n.position?.x ? { positionX: Math.round(n.position.x) } : {}),
+      ...(n.position?.y ? { positionY: Math.round(n.position.y) } : {}),
+    })),
+    edges: flow.edges.map((e) => ({
+      sourceKey: e.source,
+      targetKey: e.target,
+      ...(e.sourceHandle ? { handle: e.sourceHandle } : {}),
+    })),
   };
 }

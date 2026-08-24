@@ -728,3 +728,338 @@ dialog.modal::backdrop {
   cursor: pointer;
 }
 
+/* ==========================================================================
+   Advanced Flow Canvas & Custom Nodes
+   ========================================================================== */
+
+.flow-node-card {
+  width: 240px;
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+  font-size: 0.8125rem;
+  position: relative;
+  transition: border-color 150ms, box-shadow 150ms;
+}
+
+.flow-node-card:hover {
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.1);
+}
+
+.flow-node-selected {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.25) !important;
+}
+
+.flow-node-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.625rem;
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.flow-node-icon {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.flow-node-type-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.flow-node-key-label {
+  font-size: 0.6875rem;
+  color: var(--muted);
+  font-family: monospace;
+}
+
+.flow-node-body {
+  padding: 0.625rem;
+  min-height: 48px;
+}
+
+.flow-node-summary {
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.flow-node-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.flow-node-option-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+}
+
+.flow-node-option-badge {
+  background: #f59e0b;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.65rem;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.flow-node-option-title {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-node-var-tag {
+  display: inline-block;
+  margin-top: 4px;
+  background: #ccfbf1;
+  color: #0f766e;
+  font-family: monospace;
+  font-size: 0.6875rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.flow-node-condition-summary {
+  font-size: 0.75rem;
+  background: #fff7ed;
+  color: #9a3412;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid #fed7aa;
+}
+
+.flow-node-split-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.flow-node-variant-chip {
+  display: flex;
+  justify-content: space-between;
+  background: #eef2ff;
+  color: #3730a3;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+}
+
+.flow-node-handles-bar {
+  display: flex;
+  justify-content: space-around;
+  padding: 4px 0 2px 0;
+  border-top: 1px dashed var(--border);
+  background: var(--bg);
+  position: relative;
+  min-height: 18px;
+}
+
+.flow-handle-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.text-emerald { color: #059669; }
+.text-rose { color: #e11d48; }
+
+/* Palette flow grid */
+.palette-grid-flow {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.375rem;
+  margin-top: 0.5rem;
+}
+
+.palette-btn-flow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: var(--radius-sm);
+  padding: 0.375rem 0.625rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 100ms, background-color 100ms;
+}
+
+.palette-btn-flow:hover {
+  background: #f8fafc;
+  transform: translateX(2px);
+}
+
+.btn-var-pill {
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #bae6fd;
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 1px 8px;
+  cursor: pointer;
+  transition: background 150ms;
+}
+
+.btn-var-pill:hover {
+  background: #bae6fd;
+}
+
+.config-option-card {
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.btn-link-danger {
+  background: transparent;
+  border: none;
+  color: var(--danger);
+  font-weight: bold;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.condition-branch-legend {
+  font-size: 0.75rem;
+  background: var(--bg);
+  padding: 0.5rem;
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ==========================================================================
+   Simulator Modal
+   ========================================================================== */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.4);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.simulator-modal {
+  width: 90%;
+  max-width: 720px;
+  height: 600px;
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.simulator-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.simulator-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.simulator-chat {
+  flex: 1;
+  background: #efeae2;
+  padding: 1rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.sim-bubble {
+  max-width: 80%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  position: relative;
+}
+
+.sim-bubble-bot {
+  align-self: flex-start;
+  background: #ffffff;
+  color: #111b21;
+  border-top-left-radius: 0;
+}
+
+.sim-bubble-user {
+  align-self: flex-end;
+  background: #d9fdd3;
+  color: #111b21;
+  border-top-right-radius: 0;
+}
+
+.sim-bubble-time {
+  font-size: 0.65rem;
+  color: #667781;
+  text-align: right;
+  margin-top: 2px;
+}
+
+.simulator-sidebar {
+  width: 220px;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.simulator-vars-box {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem;
+  font-size: 0.75rem;
+  font-family: monospace;
+  overflow: auto;
+  margin: 0;
+}
+
+.simulator-input-bar {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+

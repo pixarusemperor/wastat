@@ -433,4 +433,205 @@ describe("engine", () => {
       expect(wfOf(eA2)).toBe(wfOf(eA));
     });
   });
+
+  describe("Flow extensions: variables, menus, condition branching, and input collection", () => {
+    it("interpolates {{vars.x}} and {{contact.phone}} into messages", async () => {
+      const { db, engine, sent } = setup();
+      const workflowId = seedWorkflow(
+        db,
+        [
+          { key: "t", type: "trigger" },
+          { key: "s", type: "send_text", config: { text: "Hello {{contact.phone}}, your plan is {{vars.plan}}!" } },
+          { key: "e", type: "end" },
+        ],
+        [["t", "s"], ["s", "e"]],
+      );
+      const { sessionId, contactId } = seedContactSession(db);
+      const execId = engine.startExecution(workflowId, sessionId, contactId, undefined, { plan: "Pro" })!;
+
+      await engine.scheduler.tick();
+
+      expect(sent).toContainEqual({
+        sessionId,
+        toPhone: "+15550001",
+        kind: "text",
+        text: "Hello +15550001, your plan is Pro!",
+      });
+    });
+
+    it("evaluates condition predicates (equals, contains, present) and branches to true/false edges", async () => {
+      const { db, clock, engine, sent } = setup();
+      const wf = db.prepare("INSERT INTO workflows (name, active) VALUES ('cond_wf', 1)").run();
+      const wfId = Number(wf.lastInsertRowid);
+
+      const insNode = db.prepare("INSERT INTO workflow_nodes (workflow_id, node_key, type, config) VALUES (?, ?, ?, ?)");
+      insNode.run(wfId, "t", "trigger", "{}");
+      insNode.run(wfId, "c", "condition", JSON.stringify({
+        subject: "var",
+        subjectKey: "score",
+        operator: "greater_than",
+        value: "50",
+      }));
+      insNode.run(wfId, "high", "send_text", JSON.stringify({ text: "High score!" }));
+      insNode.run(wfId, "low", "send_text", JSON.stringify({ text: "Low score!" }));
+      insNode.run(wfId, "e", "end", "{}");
+
+      const insEdge = db.prepare("INSERT INTO workflow_edges (workflow_id, source_key, target_key, handle) VALUES (?, ?, ?, ?)");
+      insEdge.run(wfId, "t", "c", null);
+      insEdge.run(wfId, "c", "high", "true");
+      insEdge.run(wfId, "c", "low", "false");
+      insEdge.run(wfId, "high", "e", null);
+      insEdge.run(wfId, "low", "e", null);
+
+      const { sessionId, contactId } = seedContactSession(db);
+
+      // 1. Test True branch (score = 80 > 50)
+      const execTrue = engine.startExecution(wfId, sessionId, contactId, undefined, { score: 80 })!;
+      await engine.scheduler.tick();
+
+      expect(sent).toContainEqual({
+        sessionId,
+        toPhone: "+15550001",
+        kind: "text",
+        text: "High score!",
+      });
+
+      // 2. Test False branch (score = 20 <= 50)
+      clock.advance(5000);
+      sent.length = 0;
+      const execFalse = engine.startExecution(wfId, sessionId, contactId, undefined, { score: 20 })!;
+      await engine.scheduler.tick();
+
+      expect(sent).toContainEqual({
+        sessionId,
+        toPhone: "+15550001",
+        kind: "text",
+        text: "Low score!",
+      });
+    });
+
+    it("sends numbered text menu and routes down selected option branch on user reply", async () => {
+      const { db, clock, engine, sent } = setup();
+      const wf = db.prepare("INSERT INTO workflows (name, active) VALUES ('menu_wf', 1)").run();
+      const wfId = Number(wf.lastInsertRowid);
+
+      const insNode = db.prepare("INSERT INTO workflow_nodes (workflow_id, node_key, type, config) VALUES (?, ?, ?, ?)");
+      insNode.run(wfId, "t", "trigger", JSON.stringify({ keywords: ["menu"] }));
+      insNode.run(wfId, "m", "send_menu", JSON.stringify({
+        header: "Main Menu",
+        bodyText: "How can we help you?",
+        options: [
+          { id: "opt_sales", title: "Talk to Sales", description: "Pricing & Plans" },
+          { id: "opt_support", title: "Technical Support", description: "Bug reports" },
+        ],
+      }));
+      insNode.run(wfId, "sales_resp", "send_text", JSON.stringify({ text: "Connecting to Sales..." }));
+      insNode.run(wfId, "support_resp", "send_text", JSON.stringify({ text: "Connecting to Support..." }));
+      insNode.run(wfId, "e", "end", "{}");
+
+      const insEdge = db.prepare("INSERT INTO workflow_edges (workflow_id, source_key, target_key, handle) VALUES (?, ?, ?, ?)");
+      insEdge.run(wfId, "t", "m", null);
+      insEdge.run(wfId, "m", "sales_resp", "opt_sales");
+      insEdge.run(wfId, "m", "support_resp", "opt_support");
+      insEdge.run(wfId, "sales_resp", "e", null);
+      insEdge.run(wfId, "support_resp", "e", null);
+
+      const { sessionId, contactId } = seedContactSession(db);
+
+      // Start workflow via incoming "menu"
+      const insMsg = db.prepare("INSERT INTO messages (session_id, contact_id, direction, message_type, text, timestamp) VALUES (?, ?, 'in', 'text', 'menu', '2026-08-24T00:00:00Z')").run(sessionId, contactId);
+      const msgId = Number(insMsg.lastInsertRowid);
+
+      const execId = engine.handleIncomingMessage(sessionId, contactId, msgId)!;
+      expect(execId).not.toBeNull();
+
+      // Process outbound menu send
+      await engine.scheduler.tick();
+
+      expect(sent[0].text).toContain("*Main Menu*");
+      expect(sent[0].text).toContain("*1.* Talk to Sales - _Pricing & Plans_");
+      expect(sent[0].text).toContain("*2.* Technical Support - _Bug reports_");
+      expect(sent[0].text).toContain("_Reply with the number of your choice._");
+
+      // Verify execution is suspended waiting for input
+      const execRow = db.prepare("SELECT status, current_node_key FROM workflow_executions WHERE id = ?").get(execId) as any;
+      expect(execRow.status).toBe("waiting_input");
+      expect(execRow.current_node_key).toBe("m");
+
+      // Advance clock past 5s rate limit and user replies with "1"
+      clock.advance(5000);
+      sent.length = 0;
+      const insReply = db.prepare("INSERT INTO messages (session_id, contact_id, direction, message_type, text, timestamp) VALUES (?, ?, 'in', 'text', '1', '2026-08-24T00:00:05Z')").run(sessionId, contactId);
+      const replyMsgId = Number(insReply.lastInsertRowid);
+
+      const advancedId = engine.handleIncomingMessage(sessionId, contactId, replyMsgId);
+      expect(advancedId).toBe(execId);
+
+      // Process outbound sales response
+      await engine.scheduler.tick();
+
+      expect(sent).toContainEqual({
+        sessionId,
+        toPhone: "+15550001",
+        kind: "text",
+        text: "Connecting to Sales...",
+      });
+    });
+
+    it("collect_input suspends, captures free text into vars, and advances", async () => {
+      const { db, clock, engine, sent } = setup();
+      const wf = db.prepare("INSERT INTO workflows (name, active) VALUES ('input_wf', 1)").run();
+      const wfId = Number(wf.lastInsertRowid);
+
+      const insNode = db.prepare("INSERT INTO workflow_nodes (workflow_id, node_key, type, config) VALUES (?, ?, ?, ?)");
+      insNode.run(wfId, "t", "trigger", JSON.stringify({ keywords: ["register"] }));
+      insNode.run(wfId, "ask_name", "collect_input", JSON.stringify({
+        promptText: "What is your full name?",
+        varKey: "user_name",
+      }));
+      insNode.run(wfId, "confirm", "send_text", JSON.stringify({
+        text: "Welcome, {{vars.user_name}}!",
+      }));
+      insNode.run(wfId, "e", "end", "{}");
+
+      const insEdge = db.prepare("INSERT INTO workflow_edges (workflow_id, source_key, target_key, handle) VALUES (?, ?, ?, ?)");
+      insEdge.run(wfId, "t", "ask_name", null);
+      insEdge.run(wfId, "ask_name", "confirm", null);
+      insEdge.run(wfId, "confirm", "e", null);
+
+      const { sessionId, contactId } = seedContactSession(db);
+
+      // 1. Inbound trigger "register"
+      const insMsg = db.prepare("INSERT INTO messages (session_id, contact_id, direction, message_type, text, timestamp) VALUES (?, ?, 'in', 'text', 'register', '2026-08-24T00:00:00Z')").run(sessionId, contactId);
+      const execId = engine.handleIncomingMessage(sessionId, contactId, Number(insMsg.lastInsertRowid))!;
+
+      // Send prompt
+      await engine.scheduler.tick();
+      expect(sent).toContainEqual({
+        sessionId,
+        toPhone: "+15550001",
+        kind: "text",
+        text: "What is your full name?",
+      });
+
+      // 2. Advance clock past 5s rate limit and user replies with their name "Steven Jossu"
+      clock.advance(5000);
+      sent.length = 0;
+      const insReply = db.prepare("INSERT INTO messages (session_id, contact_id, direction, message_type, text, timestamp) VALUES (?, ?, 'in', 'text', 'Steven Jossu', '2026-08-24T00:00:05Z')").run(sessionId, contactId);
+      engine.handleIncomingMessage(sessionId, contactId, Number(insReply.lastInsertRowid));
+
+      // Process confirmation
+      await engine.scheduler.tick();
+      expect(sent).toContainEqual({
+        sessionId,
+        toPhone: "+15550001",
+        kind: "text",
+        text: "Welcome, Steven Jossu!",
+      });
+
+      // Check stored vars in DB
+      const exec = db.prepare("SELECT vars FROM workflow_executions WHERE id = ?").get(execId) as any;
+      expect(JSON.parse(exec.vars)).toEqual({ user_name: "Steven Jossu" });
+    });
+  });
 });

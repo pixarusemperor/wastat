@@ -13,6 +13,53 @@ const WASENDER_API = `${process.env.WASENDER_BASE_URL ?? "https://www.wasenderap
  * - Video: { to, text?: caption, videoUrl }
  * - Document: { to, documentUrl, fileName }
  */
+/**
+ * Compiles options into a numbered WhatsApp text menu fallback.
+ * Formats cleanly with bold numbers and optional descriptions.
+ */
+export function buildTextMenu(
+  header: string | undefined,
+  bodyText: string,
+  options: Array<{ id: string; title: string; description?: string }>,
+  footer: string | undefined,
+): string {
+  const lines: string[] = [];
+  if (header && header.trim()) lines.push(`*${header.trim()}*\n`);
+  if (bodyText && bodyText.trim()) lines.push(bodyText.trim());
+  lines.push("");
+  options.forEach((opt, idx) => {
+    const desc = opt.description && opt.description.trim() ? ` - _${opt.description.trim()}_` : "";
+    lines.push(`*${idx + 1}.* ${opt.title.trim()}${desc}`);
+  });
+  lines.push("");
+  if (footer && footer.trim()) {
+    lines.push(`_${footer.trim()}_`);
+  } else {
+    lines.push("_Reply with the number of your choice._");
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Sends a typing/recording presence update before outbound messages.
+ */
+export async function sendPresenceUpdate(
+  apiKey: string,
+  toPhone: string,
+  type: "composing" | "recording" | "available" | "unavailable" = "composing",
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const PRESENCE_API = `${process.env.WASENDER_BASE_URL ?? "https://www.wasenderapi.com/api"}/send-presence-update`;
+  await fetchImpl(PRESENCE_API, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ jid: toPhone, type }),
+  }).catch(() => {});
+}
+
 export function makeWasenderTransport(
   db?: BetterSqlite3.Database,
   storage: StorageProvider = createStorageFromEnv(),

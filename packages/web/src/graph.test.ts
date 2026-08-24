@@ -35,8 +35,8 @@ describe("graph ↔ React Flow mapping", () => {
     const { nodes, edges } = toFlow(graph);
     const moved = nodes.map((n) => ({ ...n, position: { ...n.position, x: n.position.x + 5 } }));
     const out = fromFlow({ nodes: moved, edges }, { name: "wf", description: null, active: 1 });
-    // positions are view-only; the stored graph is identical
-    expect(out.nodes).toEqual(graph.nodes);
+    expect(out.nodes.map((n) => ({ nodeKey: n.nodeKey, type: n.type, config: n.config }))).toEqual(graph.nodes);
+    expect(out.nodes[0].positionX).toBe(nodes[0].position.x + 5);
     expect(out.edges).toEqual(graph.edges);
   });
 

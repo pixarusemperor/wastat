@@ -51,8 +51,10 @@ CREATE TABLE IF NOT EXISTS workflow_nodes (
   id          INTEGER PRIMARY KEY,
   workflow_id INTEGER NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
   node_key    TEXT NOT NULL,
-  type        TEXT NOT NULL CHECK (type IN ('trigger', 'keyword', 'send_text', 'send_media', 'delay', 'end')),
+  type        TEXT NOT NULL,
   config      TEXT NOT NULL DEFAULT '{}',
+  position_x  REAL NOT NULL DEFAULT 0,
+  position_y  REAL NOT NULL DEFAULT 0,
   UNIQUE (workflow_id, node_key)
 );
 
@@ -61,7 +63,8 @@ CREATE TABLE IF NOT EXISTS workflow_edges (
   workflow_id INTEGER NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
   source_key  TEXT NOT NULL,
   target_key  TEXT NOT NULL,
-  UNIQUE (workflow_id, source_key, target_key)
+  handle      TEXT,
+  UNIQUE (workflow_id, source_key, target_key, handle)
 );
 
 -- Sticky assignment: a contact always lands in the same variant.
@@ -104,8 +107,10 @@ CREATE TABLE IF NOT EXISTS workflow_executions (
   contact_id         INTEGER NOT NULL REFERENCES contacts(id),
   trigger_message_id INTEGER REFERENCES messages(id),
   status             TEXT NOT NULL DEFAULT 'running'
-                     CHECK (status IN ('running', 'waiting', 'completed', 'failed', 'cancelled')),
+                     CHECK (status IN ('running', 'waiting', 'waiting_input', 'completed', 'failed', 'cancelled')),
   current_node_key   TEXT,
+  vars               TEXT NOT NULL DEFAULT '{}',
+  reprompt_count     INTEGER NOT NULL DEFAULT 0,
   started_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   finished_at        TEXT
 );
