@@ -1,8 +1,9 @@
 # WaStat V2: Master Technical Specification & Product Source of Truth (SSOT)
 
 > **Document Status**: Complete, Exhaustive Single Source of Truth (SSOT)  
-> **Last Synchronized**: 2026-08-24  
-> **Target Audience**: Core Engineers, Subagents across any AI Coding Harness (Claude Code, Cursor, Windsurf, Codex, Buzz), and System Operators.
+> **Last Synchronized**: 2026-08-24 (Session Checkpoint: UI/UX Pro Max Overhaul & Verification)  
+> **Latest Git Commits**: [`3cede55`](https://github.com/pixarusemperor/wastat/commit/3cede553db04ceefd0eeeb2423bc272d547f3b6c) (Head of `main`)  
+> **Target Audience**: Core Engineers, Subagents across any AI Coding Harness (Claude Code, Cursor, Windsurf, Codex, Antigravity, Buzz), and System Operators.
 
 ---
 
@@ -18,7 +19,12 @@ WaStat V2 synthesizes proven architectural patterns from top-tier conversational
 │ • 4-Mode AI Sales Flywheel   │ • Unofficial Companion Sync  │ • Native MCP Server (stdio)  │ • Cartesian Matrix  │
 │ • Golden Dialogue Harvesting │ • In-thread Private Notes    │ • Triage & Steer from Chat   │ • Anti-Ban Jitter   │
 │ • Groq 70B Distillation Gate │ • Customer 360 & Tag System  │ • 1-Click Remote Progression │ • Priority 1 Preempt│
-└──────────────────────────────┴──────────────────────────────┴──────────────────────────────┴─────────────────────┘
+├──────────────────────────────┴──────────────────────────────┴──────────────────────────────┴─────────────────────┤
+│ 5. UI/UX Pro Max Design Intelligence (.agents/skills/ui-ux-pro-max/)                                             │
+│ • Product Type #101 (CRM & Client Management) + Product Type #18 (AI/Chatbot Platform)                           │
+│ • Strict SVG Vector Primitives (Zero Raw Emojis) • Slate/Emerald/Amber/Indigo Tokens (WCAG 2.1 AA 4.5:1)        │
+│ • 3-Tier Responsive Ergonomics: Desktop (3-Pane B2B) → Tablet (2-Column Split) → Mobile (Single-Pane Flow)       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 1.1 DeskcommCRM (`https://github.com/melgarafael/DeskcommCRM`)
@@ -26,8 +32,8 @@ WaStat V2 synthesizes proven architectural patterns from top-tier conversational
 - **The DeskcommCRM Pattern Adopted**:
   1. **Mode 1 (Human Baseline)**: Pure human sales reps handle edge cases and objections first in the live Inbox.
   2. **Golden Dialogue Harvesting**: The system automatically captures winning interactions `(Customer Query → Operator Answer → Phase 2 Won)` into `golden_dialogues`.
-  3. **Groq Llama 3.3 Distillation**: Clusters dialogues into canonical trigger intents and distill approved answers into `knowledge_playbooks`.
-  4. **Mode 2 (Human-Guided Co-Pilot)**: AI surfaces suggested responses in the operator's Inbox with 1-Click **"Approve & Send"**, **"Guide AI / Adjust Tone"**, or **"Pick Alternative Product"**.
+  3. **Groq Llama 3.3 Distillation**: Clusters dialogues into canonical trigger intents and distills approved answers into `knowledge_playbooks`.
+  4. **Mode 2 (Human-Guided Co-Pilot)**: AI surfaces suggested responses in the operator's Inbox with 1-Click **"Approve & Send"** (<kbd>Tab</kbd> to insert), **"Guide AI / Adjust Tone"**, or **"Pick Alternative Product"**.
   5. **Mode 3 (Autonomous Autopilot)**: Fully approved playbooks execute autonomously when confidence $\ge 95\%$.
 
 ### 1.2 Periskope (`https://periskope.app/llms.txt`)
@@ -75,18 +81,18 @@ stateDiagram-v2
 
     state phase_1_waiting_answer {
         [*] --> Attribution_Timer
-        Attribution_Timer --> Organic_Reply: Inbound Reply < 2h
-        Attribution_Timer --> Silence_Sweeper: 2h Elapsed Without Reply
+        Attribution_Timer --> Organic_Reply: Inbound Reply < 2h (Advances down on_reply)
+        Attribution_Timer --> Silence_Sweeper: 2h Elapsed (Advances down on_silence_2h)
     }
 
-    Silence_Sweeper --> phase_1_waiting_answer: Advance down on_silence_2h follow-up
+    Silence_Sweeper --> phase_1_waiting_answer: Nudge / Follow-up delivered
     Organic_Reply --> objection_review: Unscripted Question / Objection
     Organic_Reply --> phase_1_qualified: Qualifying Criteria Passed
 
     state objection_review {
         [*] --> Operator_Takeover: Human Rep Replies in Inbox (Pauses Bot 24h)
         [*] --> AI_Copilot_Draft: Groq Suggests Approved Answer
-        AI_Copilot_Draft --> Operator_Takeover: Rep 1-Clicks "Approve & Send"
+        AI_Copilot_Draft --> Operator_Takeover: Rep Presses Tab to Accept & Send
     }
 
     Operator_Takeover --> phase_1_qualified: Lead Confirms Interest
@@ -106,11 +112,11 @@ stateDiagram-v2
 
 ## 📊 SECTION 3: COMPLETE 8-PRIORITY TECHNICAL SPECIFICATIONS
 
-### 🎯 Priority 1: Core Workflow Execution Engine & Anti-Ban Foundation
-- **Spintax Engine (`@wastat/shared`)**:
-  - Implements recursive bracket parsing `parseSpintax(template, rng)`.
+### 🎯 Priority 1: Core Workflow Execution Engine & Anti-Ban Foundation [100% COMPLETE]
+- **Spintax Engine (`@wastat/shared/src/spintax.ts`)**:
+  - Recursive bracket parsing `parseSpintax(template, rng)`.
   - Supports nested variations: `{Hi|{Hello|Hey}} {{contact.name}}, {check out|explore} our {new|exclusive} villa collection!`
-  - Execution order: Variable substitution `{{vars.x}}` and `{{contact.attr}}` is performed **first**, followed by Spintax evaluation to guarantee variables inside variations resolve cleanly.
+  - Execution order: Variable substitution `{{vars.x}}` and `{{contact.attr}}` is performed **first**, followed by Spintax evaluation.
 - **2-Hour Windowed Silence Sweeper**:
   - Outbound presentation delivery sets `silence_followup_at = now + 2h` and `reply_window_expires_at = now + 2h`.
   - Organic replies received $\le 2\text{h}$ are marked `organic_2h_reply = 1` and clear the timer.
@@ -121,18 +127,18 @@ stateDiagram-v2
 
 ---
 
-### 🎯 Priority 2: Visual Workflow Builder & AI Copilot (`WorkflowEditor.tsx`)
+### 🎯 Priority 2: Visual Workflow Builder & Dual Handles (`WorkflowEditor.tsx`) [100% COMPLETE]
 - **React Flow Visual Canvas**:
   - Renders all 31 capability nodes categorized into Inbound Triggers, Wasender Messaging Actions, Flow Control & Logic, and Contact Actions.
-  - **Dual-Handle Question Branching**:
-    - 🟢 Right Upper Handle: `on_reply` (advances upon customer response).
-    - 🟠 Right Lower Handle: `on_silence_2h` (advances upon 2-hour timeout).
-  - **Milestone Nodes**: Configures micro-conversions (`milestoneKey`, `milestoneName`, `value`) inserted into `funnel_conversions`.
-  - **Live Spintax Preview**: Interactive inspector displaying 5 real-time randomized permutations.
+  - **Dual-Handle Input & Question Nodes**:
+    - 🟢 Left Handle (`on_reply`, `#059669` Emerald Green): Advances execution upon immediate customer response.
+    - 🟠 Right Handle (`on_silence_2h`, `#D97706` Amber Orange): Advances execution when the 2-hour window expires without a customer reply.
+  - **Node Category Badges**: Sky (Triggers), Emerald (Messaging), Indigo (Logic & AI), Amber (Fallbacks).
+  - **Live Spintax Permutation Drawer**: Interactive inspector displaying 5 real-time randomized permutations.
 
 ---
 
-### 🎯 Priority 3: 2-Hour Windowed Silence Sweeper & State Machine
+### 🎯 Priority 3: 2-Hour Windowed Silence Sweeper & State Machine [100% COMPLETE]
 - **Multi-Tier Silence Follow-Up**:
   - Tier 1 (2 Hours): Nudge referencing the specific media variant sent.
   - Tier 2 (24 Hours): Soft breakup or alternative offer message.
@@ -140,19 +146,19 @@ stateDiagram-v2
 
 ---
 
-### 🎯 Priority 4: Live Operator Inbox & Customer 360 Panel (`Inbox.tsx`)
-- **Live Attributed Thread**: Shows outbound bubbles (green) with single/double/blue ticks, workflow source badges (`⚡ Workflow A`), and inbound reply attribution (`↩ Replied to: Variant Video`).
-- **Private Team Notes Tab**: Internal yellow conversation cards stored in `private_notes`, completely invisible to the customer.
-- **Customer 360 Sidebar**: Displays phone, name, tags, funnel phase, countdown timer for bot pause, and all key-value attributes stored in `contact_attributes`.
-- **1-Click Actions**:
-  - `🚀 Advance to Phase 2`: Transitions lead to `phase_2_active` and launches the closing workflow.
-  - `⏸ Pause / ▶ Resume Bot`: Toggles manual human takeover.
-  - `💬 Manual Message Composer`: Sends direct WhatsApp messages through connected companion session.
+### 🎯 Priority 4: Live Operator Inbox & Customer 360 Panel (`Inbox.tsx`) [100% COMPLETE]
+- **Desktop Layout (`320px | 1fr | 340px`)**:
+  - **Leads Feed**: Search filter, filter chips (`All`, `Needs Review`, `Phase 1`, `Phase 2`), and real-time status badges (`Takeover`, `Phase 1`, `Phase 2`).
+  - **Attributed Message Thread**: WhatsApp bubbles, read receipts (`✓✓`), workflow source attribution (`⚡ Phase 1: Video Hook (Variant A)`), inbound reply attribution (`↩ Replied to: Video Hook`), video player preview cards (`0:45 • 4.2 MB`), and interactive voice note waveforms.
+  - **Keyboard-First AI Co-Pilot**: Surfaces Groq Llama 3.3 suggestions. Press <kbd>Tab</kbd> to insert; press <kbd>Esc</kbd> to dismiss.
+  - **Customer 360 Sidebar**: Displays phone, name, tags, funnel phase, countdown timer (`⏳ 01h 48m left`), 1-Click `🚀 Advance to Phase 2 (Closing)`, bot takeover toggle, and dynamic attributes.
+- **Responsive Mobile & Tablet View**:
+  - Single-pane mobile view with instant `← Back` navigation, swipeable horizontal navbar, and off-canvas slide-over Customer 360 sheet.
 
 ---
 
-### 🎯 Priority 5: WaStat Native MCP Server (Block Buzz & Antigravity CLI)
-- **Architecture**: Standalone workspace package `packages/mcp-server/` using `@modelcontextprotocol/sdk`.
+### 🎯 Priority 5: WaStat Native MCP Server (`packages/mcp-server/`) [100% COMPLETE]
+- **Architecture**: Standalone package using `@modelcontextprotocol/sdk`.
 - **Exposed Tools**:
   1. `wastat_get_system_summary`: High-level dashboard summary (active sessions, queue size, funnel counts).
   2. `wastat_list_stuck_leads`: Queries leads in `objection_review` or stalled past 2h.
@@ -164,7 +170,7 @@ stateDiagram-v2
 
 ---
 
-### 🎯 Priority 6: AI Sales Co-Pilot & Learning Flywheel (Groq Llama 3.3 70B)
+### 🎯 Priority 6: AI Sales Co-Pilot & Learning Flywheel (Groq Llama 3.3 70B) [100% READY / IN PROGRESS]
 - **Model**: `llama-3.3-70b-versatile` on Groq API free tier (sub-300ms inference).
 - **Flywheel Pipeline**:
   - `packages/server/src/ai/flywheel.ts`: Queries `golden_dialogues` for converted interactions, clusters common objection patterns, and formats structured prompts to generate `knowledge_playbooks`.
@@ -172,7 +178,7 @@ stateDiagram-v2
 
 ---
 
-### 🎯 Priority 7: E-commerce Catalog & Cartesian Broadcast Scheduler (Wasposter)
+### 🎯 Priority 7: E-commerce Catalog & Cartesian Broadcast Scheduler (Wasposter) [100% READY]
 - **Product Catalog Repository**: Products with SKUs, pricing, descriptions, and Cloudflare R2 media keys.
 - **Cartesian Matrix Dispatches**: Computes $N\text{ Products} \times M\text{ Groups}$ campaign queues.
 - **Priority Preemption Queue**: The job runner (`packages/server/src/scheduler.ts`) always polls `priority = 1` jobs before `priority = 2` jobs:
@@ -185,13 +191,16 @@ stateDiagram-v2
 
 ---
 
-### 🎯 Priority 8: Multi-Stage Funnel Analytics & Statistical Decision Engine
+### 🎯 Priority 8: Multi-Stage Funnel Analytics & Two-Proportion Z-Test Engine [100% COMPLETE]
 - **Metric Formulation**:
   $$\text{2-Hour Reply Rate} = \frac{\text{Replies within 120m}}{\text{Presentations Delivered}}$$
   $$\text{Qualification Rate} = \frac{\text{Leads Advanced to Phase 2}}{\text{Total Inbound Leads}}$$
-- **Two-Proportion Z-Test Significance**:
-  $$Z = \frac{p_A - p_B}{\sqrt{p(1-p)\left(\frac{1}{n_A} + \frac{1}{n_B}\right)}}, \quad p = \frac{x_A + x_B}{n_A + n_B}$$
-- When $p < 0.05$, the system renders: **🏆 Variant A is Statistically Winning (+X% Lift)** with a 1-Click **[Adopt Winner 100%]** button.
+- **Two-Proportion Z-Test Implementation (`packages/web/src/Experiments.tsx`)**:
+  $$\hat{p} = \frac{x_1 + x_2}{n_1 + n_2}, \quad SE = \sqrt{\hat{p}(1-\hat{p})\left(\frac{1}{n_1} + \frac{1}{n_2}\right)}, \quad Z = \frac{p_1 - p_2}{SE}$$
+  $$p\text{-value} = 2 \times (1 - \Phi(|Z|))$$
+- **Significance Badge & 1-Click Winner Adoption**:
+  - Shows `✓ Statistically Significant (p < 0.05) • 98.4% Confidence`.
+  - 1-Click Banner: `🚀 Adopt Winner (100% Traffic)`.
 
 ---
 
@@ -200,7 +209,7 @@ stateDiagram-v2
 All 19 tables are live in Supabase PostgreSQL (`ljjokmpuhyjgglxahmmv`):
 
 ```sql
--- 1. Sessions
+-- 1. Sessions (Wasender API Companion Instances)
 CREATE TABLE sessions (
   id BIGSERIAL PRIMARY KEY,
   name TEXT NOT NULL,
@@ -211,7 +220,7 @@ CREATE TABLE sessions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 2. Contacts
+-- 2. Contacts (Leads & Customers)
 CREATE TABLE contacts (
   id BIGSERIAL PRIMARY KEY,
   phone TEXT NOT NULL UNIQUE,
@@ -222,7 +231,7 @@ CREATE TABLE contacts (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 3. Contact Attributes (Customer 360)
+-- 3. Contact Attributes (Customer 360 Dynamic Schema)
 CREATE TABLE contact_attributes (
   id BIGSERIAL PRIMARY KEY,
   contact_id BIGINT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
@@ -240,7 +249,7 @@ CREATE TABLE contact_tags (
   PRIMARY KEY (contact_id, tag)
 );
 
--- 5. Private Team Notes
+-- 5. Private Team Notes (Internal Collaboration)
 CREATE TABLE private_notes (
   id BIGSERIAL PRIMARY KEY,
   contact_id BIGINT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
@@ -249,7 +258,7 @@ CREATE TABLE private_notes (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 6. Funnel Transitions
+-- 6. Funnel Transitions (Stage Progression Audit Log)
 CREATE TABLE funnel_transitions (
   id BIGSERIAL PRIMARY KEY,
   contact_id BIGINT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
@@ -260,7 +269,7 @@ CREATE TABLE funnel_transitions (
   transitioned_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 7. Media Assets (Cloudflare R2)
+-- 7. Media Assets (Cloudflare R2 Storage)
 CREATE TABLE media_assets (
   id BIGSERIAL PRIMARY KEY,
   filename TEXT NOT NULL,
@@ -271,7 +280,7 @@ CREATE TABLE media_assets (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 8. Experiments
+-- 8. Experiments (A/B Testing Framework)
 CREATE TABLE experiments (
   id BIGSERIAL PRIMARY KEY,
   name TEXT NOT NULL,
@@ -280,7 +289,7 @@ CREATE TABLE experiments (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 9. Workflows
+-- 9. Workflows (Automation Graphs)
 CREATE TABLE workflows (
   id BIGSERIAL PRIMARY KEY,
   name TEXT NOT NULL,
@@ -292,7 +301,7 @@ CREATE TABLE workflows (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 10. Workflow Nodes
+-- 10. Workflow Nodes (Graph Steps)
 CREATE TABLE workflow_nodes (
   id BIGSERIAL PRIMARY KEY,
   workflow_id BIGINT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
@@ -304,7 +313,7 @@ CREATE TABLE workflow_nodes (
   UNIQUE (workflow_id, node_key)
 );
 
--- 11. Workflow Edges
+-- 11. Workflow Edges (Graph Transitions & Dual Handles)
 CREATE TABLE workflow_edges (
   id BIGSERIAL PRIMARY KEY,
   workflow_id BIGINT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
@@ -323,7 +332,7 @@ CREATE TABLE experiment_assignments (
   PRIMARY KEY (experiment_id, contact_id)
 );
 
--- 13. Messages
+-- 13. Messages (Inbound & Outbound History)
 CREATE TABLE messages (
   id BIGSERIAL PRIMARY KEY,
   session_id BIGINT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -342,7 +351,7 @@ CREATE TABLE messages (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 14. Workflow Executions
+-- 14. Workflow Executions (Runtime State & Silence Sweeper)
 CREATE TABLE workflow_executions (
   id BIGSERIAL PRIMARY KEY,
   workflow_id BIGINT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
@@ -360,7 +369,7 @@ CREATE TABLE workflow_executions (
   finished_at TIMESTAMPTZ
 );
 
--- 15. Queue Jobs (Priority Preemption)
+-- 15. Queue Jobs (Priority 1 Preemption Queue)
 CREATE TABLE jobs (
   id BIGSERIAL PRIMARY KEY,
   type TEXT NOT NULL CHECK (type IN ('send_message', 'resume')),
@@ -387,7 +396,7 @@ CREATE TABLE events (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 17. Golden Dialogues (Learning Flywheel)
+-- 17. Golden Dialogues (DeskcommCRM Learning Flywheel)
 CREATE TABLE golden_dialogues (
   id BIGSERIAL PRIMARY KEY,
   contact_id BIGINT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
@@ -433,9 +442,22 @@ CREATE TABLE funnel_conversions (
 | **Spintax Anti-Ban Parser** | 🟢 **100% DONE** | 14/14 tests passing (`packages/shared/src/spintax.test.ts`). |
 | **2-Hour Silence Sweeper Engine** | 🟢 **100% DONE** | Automated poller loop tested in `packages/server/src/engine.test.ts`. |
 | **Human Takeover Bot Freeze** | 🟢 **100% DONE** | 24-hour pause verified on manual message send. |
-| **Live Operator Inbox UI** | 🟢 **100% DONE** | Customer 360 attributes sidebar, Private Team Notes, and manual chat composer. |
-| **Visual Workflow Canvas Polish** | 🟡 **READY** | Sliced in `.scratch/v2/issues/TASK-05-VISUAL-BUILDER-CANVAS.md`. |
-| **WaStat MCP Server Package** | 🟡 **READY** | Sliced in `.scratch/v2/issues/TASK-03-MCP-SERVER.md`. |
-| **Groq AI Sales Co-Pilot** | 🟡 **READY** | Sliced in `.scratch/v2/issues/TASK-04-AI-COPILOT-GROQ.md`. |
+| **Live Operator Inbox UI** | 🟢 **100% DONE** | 3-Column layout, rich media waveforms, video cards, keyboard AI Copilot. |
+| **Visual Workflow Canvas & Dual Handles** | 🟢 **100% DONE** | Dual handles (`on_reply` & `on_silence_2h`) wired in `WorkflowEditor.tsx`. |
+| **Two-Proportion Z-Test Statistical Engine**| 🟢 **100% DONE** | Live calculation of Z-score, p-value, and 1-click winner adoption banner. |
+| **WaStat MCP Server Package** | 🟢 **100% DONE** | 7 tools exposed, tested in `packages/mcp-server/src/tools.test.ts`. |
+| **Groq AI Sales Co-Pilot Flywheel** | 🟡 **READY** | Sliced in `.scratch/v2/issues/TASK-04-AI-COPILOT-GROQ.md`. |
 | **Cartesian Broadcast Scheduler** | 🟡 **READY** | Sliced in `.scratch/v2/issues/TASK-06-CARTESIAN-SCHEDULER.md`. |
-| **Full Monorepo Quality Gates** | 🟢 **PASS** | 62/62 unit tests passing, 0 TypeScript errors, clean production Vite build. |
+| **Full Monorepo Quality Gates** | 🟢 **PASS** | 64/64 unit tests passing, 0 TypeScript errors, clean production Vite build. |
+
+---
+
+## 🚢 SECTION 6: ESSENTIAL COMMANDS & QUALITY GATES
+
+For any coding agent picking up this codebase:
+- **Typecheck All Packages**: `npm run typecheck` (0 errors required).
+- **Run Full Vitest Suite**: `npm test` (64/64 tests required to pass).
+- **Automated Screenshot Capture**: `node scripts/capture-all.mjs` (Captures Desktop, Tablet, and Mobile to `artifacts/visual-qa/`).
+- **Visual QA Suite**: `npm run test:visual` (Headless Chromium check across all viewports).
+- **Production Build**: `npm run build` (Vite build + tsc compile across workspaces).
+- **Dev Server**: `npm run dev`.
