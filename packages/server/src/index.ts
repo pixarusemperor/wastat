@@ -21,7 +21,7 @@ const app = await buildApp(db, {
     ? async () => ({ providerMessageId: `mock-${Date.now()}` })
     : async (input) => {
         const row = getApiKey.get(input.sessionId) as { api_key_encrypted: Buffer | string | null } | undefined;
-        const apiKey = row?.api_key_encrypted?.toString("utf8");
+        const apiKey = row?.api_key_encrypted?.toString("utf8") || process.env.WASENDER_PAT;
         if (!apiKey) throw { status: 500, code: "NO_SESSION_KEY" };
         return makeWasenderTransport(db)({ ...input, apiKey });
       },
@@ -29,7 +29,7 @@ const app = await buildApp(db, {
     ? async () => {}
     : async (input) => {
         const row = getApiKey.get(input.sessionId) as { api_key_encrypted: Buffer | string | null } | undefined;
-        const apiKey = row?.api_key_encrypted?.toString("utf8");
+        const apiKey = row?.api_key_encrypted?.toString("utf8") || process.env.WASENDER_PAT;
         if (!apiKey) return;
         await markMessageAsRead(apiKey, input.key);
       },
@@ -37,7 +37,7 @@ const app = await buildApp(db, {
     ? async () => {}
     : async (input) => {
         const row = getApiKey.get(input.sessionId) as { api_key_encrypted: Buffer | string | null } | undefined;
-        const apiKey = row?.api_key_encrypted?.toString("utf8");
+        const apiKey = row?.api_key_encrypted?.toString("utf8") || process.env.WASENDER_PAT;
         if (!apiKey) return;
         await sendPresenceUpdate(apiKey, input.toPhone, input.type);
       },
