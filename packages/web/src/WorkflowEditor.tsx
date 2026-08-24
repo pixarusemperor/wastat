@@ -618,6 +618,27 @@ export function CustomWorkflowNode({ data, selected }: NodeProps<Node<GraphNodeD
             );
           })}
         </div>
+      ) : node.type === "collect_input" ? (
+        <div className="flow-node-handles-bar">
+          <div className="flow-node-handle-slot">
+            <span className="flow-handle-label text-emerald">💬 on_reply</span>
+            <Handle
+              type="source"
+              position={Position.Bottom}
+              id="on_reply"
+              style={{ left: "30%", background: "#059669", width: 10, height: 10 }}
+            />
+          </div>
+          <div className="flow-node-handle-slot">
+            <span className="flow-handle-label text-amber">⏳ 2h silence</span>
+            <Handle
+              type="source"
+              position={Position.Bottom}
+              id="on_silence_2h"
+              style={{ left: "70%", background: "#d97706", width: 10, height: 10 }}
+            />
+          </div>
+        </div>
       ) : node.type !== "end" ? (
         <Handle
           type="source"

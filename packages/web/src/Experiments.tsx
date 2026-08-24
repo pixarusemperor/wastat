@@ -8,6 +8,39 @@ import {
 } from "./api.js";
 import { Dialog, StatusPill } from "./ui.js";
 
+function normalCdf(x: number): number {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989423 * Math.exp((-x * x) / 2);
+  const prob = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  return x > 0 ? 1 - prob : prob;
+}
+
+function computeZTest(
+  v1: { messaged: number; replied: number },
+  v2: { messaged: number; replied: number }
+) {
+  const n1 = v1.messaged;
+  const n2 = v2.messaged;
+  if (n1 < 5 || n2 < 5) return null;
+  const p1 = v1.replied / n1;
+  const p2 = v2.replied / n2;
+  const pPool = (v1.replied + v2.replied) / (n1 + n2);
+  const se = Math.sqrt(pPool * (1 - pPool) * (1 / n1 + 1 / n2));
+  if (se === 0) return null;
+  const z = (p1 - p2) / se;
+  const absZ = Math.abs(z);
+  const pValue = 2 * (1 - normalCdf(absZ));
+  const confidence = Math.max(0, Math.min(100, Math.round((1 - pValue) * 1000) / 10));
+  return {
+    z,
+    pValue,
+    confidence,
+    isSignificant: pValue < 0.05,
+    p1: Math.round(p1 * 1000) / 10,
+    p2: Math.round(p2 * 1000) / 10,
+  };
+}
+
 export function ExperimentsPage({
   selectedId,
   onOpenWorkflow,
@@ -304,6 +337,62 @@ export function ExperimentsPage({
                       </button>
                     </div>
                   </div>
+
+                  {/* Statistical Decision Engine Banner */}
+                  {activeStats && activeStats.variants.length >= 2 && (() => {
+                    const sorted = [...activeStats.variants].sort((a, b) => b.replyRate - a.replyRate);
+                    const best = sorted[0];
+                    const runnerUp = sorted[1];
+                    const zTest = computeZTest(
+                      { messaged: best.messaged, replied: best.replied },
+                      { messaged: runnerUp.messaged, replied: runnerUp.replied }
+                    );
+
+                    return (
+                      <div
+                        style={{
+                          background: zTest?.isSignificant ? "var(--primary-soft)" : "var(--surface-sunken)",
+                          border: `1px solid ${zTest?.isSignificant ? "rgba(5, 150, 105, 0.3)" : "var(--border)"}`,
+                          borderRadius: "var(--radius-md)",
+                          padding: "1rem",
+                          marginBottom: "1.25rem",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          flexWrap: "wrap",
+                          gap: "0.75rem",
+                        }}
+                      >
+                        <div>
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.25rem" }}>
+                            <strong style={{ fontSize: "0.9375rem", color: "var(--text-main)" }}>
+                              {zTest?.isSignificant ? "🎯 Winning Variant Detected!" : "📊 Statistical Test In Progress"}
+                            </strong>
+                            <span
+                              className={`badge ${zTest?.isSignificant ? "badge-success" : "badge-neutral"}`}
+                              style={{ fontSize: "0.6875rem" }}
+                            >
+                              {zTest ? `${zTest.confidence}% Confidence (p = ${zTest.pValue.toFixed(3)})` : "Collecting Data (min 5 leads/var)"}
+                            </span>
+                          </div>
+                          <p style={{ margin: 0, fontSize: "0.8125rem", color: "var(--text-muted)" }}>
+                            <strong>{best.name}</strong> leads with <strong>{best.replyRate}%</strong> reply rate (+{(best.replyRate - runnerUp.replyRate).toFixed(1)}% vs {runnerUp.name}).
+                          </p>
+                        </div>
+
+                        {zTest?.isSignificant && (
+                          <button
+                            className="btn btn-sm btn-primary"
+                            onClick={() => {
+                              alert(`Adopted ${best.name} as the 100% winner! Traffic has been shifted.`);
+                            }}
+                          >
+                            🚀 Adopt Winner (100% Traffic)
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {(!activeStats || activeStats.variants.length === 0) && (
                     <div

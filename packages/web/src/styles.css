@@ -1,5 +1,6 @@
 :root {
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
   
   /* UI UX Pro Max Calibrated Slate & Emerald Tokens */
   --bg-app: #f8fafc;
@@ -19,21 +20,29 @@
   --primary-text: #065f46;
   
   --warning: #d97706;
+  --warning-hover: #b45309;
   --warning-soft: #fef3c7;
   --warning-text: #92400e;
   
+  --accent-ai: #6366f1;
+  --accent-ai-soft: #eef2ff;
+  --accent-ai-text: #3730a3;
+  
   --accent-sky: #0284c7;
   --accent-sky-soft: #e0f2fe;
+  --accent-sky-text: #0369a1;
   
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
+  --radius-xl: 16px;
   --radius-full: 9999px;
   
   --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.08);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -57,6 +66,14 @@
     --warning: #f59e0b;
     --warning-soft: #78350f;
     --warning-text: #fde68a;
+    
+    --accent-ai: #818cf8;
+    --accent-ai-soft: #312e81;
+    --accent-ai-text: #c7d2fe;
+    
+    --accent-sky: #38bdf8;
+    --accent-sky-soft: #0c4a6e;
+    --accent-sky-text: #bae6fd;
   }
 }
 
@@ -73,7 +90,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Global Nav Bar */
+/* Global Navigation */
 .global-nav {
   height: 56px;
   background: var(--surface);
@@ -82,6 +99,9 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 0 1.25rem;
+  position: sticky;
+  top: 0;
+  z-index: 40;
 }
 
 .nav-links {
@@ -131,6 +151,7 @@ body {
   transition: all 120ms ease;
   white-space: nowrap;
   user-select: none;
+  min-height: 32px;
 }
 
 .btn:hover {
@@ -181,11 +202,13 @@ body {
 .btn-sm {
   font-size: 0.75rem;
   padding: 0.25rem 0.5rem;
+  min-height: 28px;
 }
 
 .btn-xs {
   font-size: 0.6875rem;
   padding: 0.1875rem 0.375rem;
+  min-height: 24px;
 }
 
 /* Inputs & Forms */
@@ -239,58 +262,96 @@ body {
 
 .badge-sky {
   background: var(--accent-sky-soft);
-  color: var(--accent-sky);
+  color: var(--accent-sky-text);
   border: 1px solid rgba(2, 132, 199, 0.2);
 }
 
-/* Cards & Layout */
-.card {
+.badge-ai {
+  background: var(--accent-ai-soft);
+  color: var(--accent-ai-text);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+}
+
+/* WhatsApp Rich Media Cards */
+.media-card-video {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-xs);
+  overflow: hidden;
+  margin: 0.375rem 0;
+  max-width: 320px;
 }
 
-/* Modal Dialog */
-.dialog-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.6);
-  backdrop-filter: blur(2px);
+.media-thumbnail-preview {
+  height: 140px;
+  background: linear-gradient(135deg, #1e293b, #0f172a);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 999;
+  position: relative;
+}
+
+.media-card-audio {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  padding: 0.375rem 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.375rem 0;
+  max-width: 280px;
+}
+
+.audio-waveform-bars {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  height: 20px;
+}
+
+.audio-bar {
+  width: 3px;
+  background: var(--primary);
+  border-radius: 2px;
+  opacity: 0.7;
+}
+
+/* React Flow Dual Handles for Workflow Canvas */
+.handle-reply {
+  background-color: var(--primary) !important;
+  width: 12px !important;
+  height: 12px !important;
+  border: 2px solid #ffffff !important;
+  border-radius: 50% !important;
+}
+
+.handle-silence {
+  background-color: var(--warning) !important;
+  width: 12px !important;
+  height: 12px !important;
+  border: 2px solid #ffffff !important;
+  border-radius: 50% !important;
+}
+
+/* Spintax Live Permutation Drawer */
+.spintax-drawer {
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 340px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
   padding: 1rem;
 }
 
-.dialog-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
-  max-width: 520px;
-  width: 100%;
-  padding: 1.5rem;
-}
-
-/* Keyframe animations */
-@keyframes slideUpFade {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.animate-fade-in {
-  animation: slideUpFade 150ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
-/* Responsive Grid Breakpoints for Inbox */
+/* Responsive Grid & Drawers */
 @media (max-width: 1024px) {
   .inbox-desktop-3pane {
     grid-template-columns: 280px 1fr !important;
@@ -311,4 +372,24 @@ body {
     display: flex !important;
     flex-direction: column !important;
   }
+  .touch-target {
+    min-height: 48px !important;
+    min-width: 48px !important;
+  }
+}
+
+/* Keyframe animations */
+@keyframes slideUpFade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: slideUpFade 150ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }

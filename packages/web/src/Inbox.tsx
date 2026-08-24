@@ -16,6 +16,9 @@ import {
   MessageSquareIcon,
   FileTextIcon,
   ShieldAlertIcon,
+  MicIcon,
+  VideoIcon,
+  ZapIcon,
 } from "./icons.js";
 
 // Realistic fallback demo data for immediate testing and sales walkthroughs
@@ -75,7 +78,7 @@ const DEMO_LEADS: Array<Conversation & {
         id: 3,
         direction: "out",
         messageType: "video",
-        text: "🎬 [Video Presentation] 45s Ultra-Luxury Villa Walkthrough with Infinity Pool",
+        text: "45s Ultra-Luxury Villa Walkthrough with Infinity Pool",
         status: "read",
         workflowName: "Phase 1: Video Hook",
         experimentName: "Variant A (45s Video)",
@@ -181,7 +184,7 @@ const DEMO_LEADS: Array<Conversation & {
         id: 22,
         direction: "out",
         messageType: "audio",
-        text: "🎙️ [Voice Note PTT] Personalized 45s audio intro from founder",
+        text: "Personalized 45s audio intro from founder",
         status: "read",
         workflowName: "Phase 1: Audio Hook",
         experimentName: "Variant B (Voice Note)",
@@ -195,7 +198,6 @@ export function InboxPage() {
   const [conversations, setConversations] = useState<Conversation[] | null>(null);
   const [selected, setSelected] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [simulating, setSimulating] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterPhase, setFilterPhase] = useState<"all" | "objection" | "phase_1" | "phase_2" | "paused">("all");
@@ -222,7 +224,7 @@ export function InboxPage() {
   const [sendingManual, setSendingManual] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
 
-  // New Attribute inline creation
+  // Inline attribute state
   const [attrKey, setAttrKey] = useState("");
   const [attrVal, setAttrVal] = useState("");
   const [addingAttr, setAddingAttr] = useState(false);
@@ -232,13 +234,12 @@ export function InboxPage() {
       const list = await api.conversations();
       if (list && list.length > 0) {
         setConversations(list);
-        setError(null);
         return list;
       } else {
         setConversations(DEMO_LEADS);
         return DEMO_LEADS;
       }
-    } catch (e) {
+    } catch {
       setConversations(DEMO_LEADS);
       return DEMO_LEADS;
     }
@@ -355,12 +356,6 @@ export function InboxPage() {
     setSendingManual(false);
   }
 
-  function handleUseAiSuggestion() {
-    if (aiSuggestion) {
-      setManualText(aiSuggestion);
-    }
-  }
-
   function handleAddAttribute(e: React.FormEvent) {
     e.preventDefault();
     if (!attrKey.trim() || !attrVal.trim() || !contactProfile) return;
@@ -450,7 +445,7 @@ export function InboxPage() {
               className={`btn btn-xs ${filterPhase === "phase_1" ? "btn-primary" : "btn-ghost"}`}
               onClick={() => setFilterPhase("phase_1")}
             >
-              Phase 1
+              Phase 1 (Hook)
             </button>
             <button
               className={`btn btn-xs ${filterPhase === "phase_2" ? "btn-primary" : "btn-ghost"}`}
@@ -696,7 +691,7 @@ export function InboxPage() {
                                 style={{
                                   fontSize: "0.6875rem",
                                   fontWeight: 600,
-                                  color: "var(--accent-sky)",
+                                  color: "var(--accent-sky-text)",
                                   background: "var(--accent-sky-soft)",
                                   padding: "2px 6px",
                                   borderRadius: "var(--radius-xs)",
@@ -708,10 +703,54 @@ export function InboxPage() {
                               </div>
                             )}
 
-                            {/* Message Body */}
-                            <div style={{ fontSize: "0.84375rem", lineHeight: "1.45", whiteSpace: "pre-wrap" }}>
-                              {m.text}
-                            </div>
+                            {/* Rich Media: Video Card */}
+                            {m.messageType === "video" && (
+                              <div className="media-card-video">
+                                <div className="media-thumbnail-preview">
+                                  <div style={{ width: 44, height: 44, borderRadius: "50%", background: "rgba(255, 255, 255, 0.25)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                    <PlayIcon style={{ width: 20, height: 20, color: "#ffffff", marginLeft: "2px" }} />
+                                  </div>
+                                  <span style={{ position: "absolute", bottom: "8px", right: "8px", background: "rgba(0, 0, 0, 0.7)", color: "#ffffff", padding: "2px 6px", borderRadius: "4px", fontSize: "0.6875rem", fontWeight: 600 }}>
+                                    0:45 • 4.2 MB
+                                  </span>
+                                </div>
+                                <div style={{ padding: "0.5rem 0.75rem", fontSize: "0.8125rem", fontWeight: 500, display: "flex", alignItems: "center", gap: "0.375rem" }}>
+                                  <VideoIcon style={{ width: 14, height: 14, color: "var(--primary)" }} /> {m.text}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Rich Media: Audio Voice Note Card */}
+                            {m.messageType === "audio" && (
+                              <div className="media-card-audio">
+                                <button className="btn btn-xs btn-primary" style={{ borderRadius: "50%", width: 28, height: 28, padding: 0 }}>
+                                  <PlayIcon style={{ width: 12, height: 12, marginLeft: "2px" }} />
+                                </button>
+                                <div className="audio-waveform-bars">
+                                  <span className="audio-bar" style={{ height: "40%" }} />
+                                  <span className="audio-bar" style={{ height: "70%" }} />
+                                  <span className="audio-bar" style={{ height: "100%" }} />
+                                  <span className="audio-bar" style={{ height: "60%" }} />
+                                  <span className="audio-bar" style={{ height: "85%" }} />
+                                  <span className="audio-bar" style={{ height: "45%" }} />
+                                  <span className="audio-bar" style={{ height: "90%" }} />
+                                  <span className="audio-bar" style={{ height: "30%" }} />
+                                  <span className="audio-bar" style={{ height: "75%" }} />
+                                  <span className="audio-bar" style={{ height: "50%" }} />
+                                </div>
+                                <span style={{ fontSize: "0.6875rem", color: "var(--text-muted)", fontWeight: 600 }}>
+                                  0:45
+                                </span>
+                                <MicIcon style={{ width: 14, height: 14, color: "var(--primary)" }} />
+                              </div>
+                            )}
+
+                            {/* Standard Text Message Body */}
+                            {m.messageType !== "video" && m.messageType !== "audio" && (
+                              <div style={{ fontSize: "0.84375rem", lineHeight: "1.45", whiteSpace: "pre-wrap" }}>
+                                {m.text}
+                              </div>
+                            )}
 
                             {/* Timestamp & Receipts */}
                             <div
@@ -891,8 +930,8 @@ export function InboxPage() {
                   gap: "0.5rem",
                 }}
               >
-                <span style={{ fontSize: "0.6875rem", fontWeight: 700, textTransform: "uppercase", color: "var(--text-muted)" }}>
-                  ⚡ Sales Funnel Controls
+                <span style={{ fontSize: "0.6875rem", fontWeight: 700, textTransform: "uppercase", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.25rem" }}>
+                  <ZapIcon style={{ width: 12, height: 12, color: "var(--warning)" }} /> Sales Funnel Controls
                 </span>
 
                 <button
