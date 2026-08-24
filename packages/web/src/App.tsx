@@ -1,13 +1,14 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { WorkflowList } from "./WorkflowList";
-import { WorkflowEditor } from "./WorkflowEditor";
-import { ExperimentsPage } from "./Experiments";
-import { InboxPage } from "./Inbox";
-import { SessionsPage } from "./Sessions";
-import { ProductsPage } from "./Products";
-import { BroadcastsPage } from "./Broadcasts";
-import { ExecutionsPage } from "./Executions";
-import { TestLab } from "./TestLab";
+
+const WorkflowEditor = lazy(() => import("./WorkflowEditor").then((m) => ({ default: m.WorkflowEditor })));
+const ExperimentsPage = lazy(() => import("./Experiments").then((m) => ({ default: m.ExperimentsPage })));
+const InboxPage = lazy(() => import("./Inbox").then((m) => ({ default: m.InboxPage })));
+const SessionsPage = lazy(() => import("./Sessions").then((m) => ({ default: m.SessionsPage })));
+const ProductsPage = lazy(() => import("./Products").then((m) => ({ default: m.ProductsPage })));
+const BroadcastsPage = lazy(() => import("./Broadcasts").then((m) => ({ default: m.BroadcastsPage })));
+const ExecutionsPage = lazy(() => import("./Executions").then((m) => ({ default: m.ExecutionsPage })));
+const TestLab = lazy(() => import("./TestLab").then((m) => ({ default: m.TestLab })));
 
 type Route =
   | { page: "list" | "inbox" | "sessions" | "products" | "broadcasts" | "test-lab" }
@@ -80,25 +81,27 @@ export default function App() {
         </div>
       </nav>
 
-      {route.page === "editor" && (
-        <WorkflowEditor key={route.id} id={route.id} onBack={() => navigate("#/")} />
-      )}
-      {route.page === "list" && <WorkflowList onOpen={(id) => navigate(`#/workflows/${id}`)} />}
-      {route.page === "test-lab" && <TestLab />}
-      {route.page === "executions" && (
-        <ExecutionsPage initialExecutionId={route.execId} />
-      )}
-      {route.page === "experiments" && (
-        <ExperimentsPage
-          selectedId={route.expId}
-          onOpenWorkflow={(id) => navigate(`#/workflows/${id}`)}
-          onSelectExperiment={(id) => navigate(id ? `#/experiments/${id}` : "#/experiments")}
-        />
-      )}
-      {route.page === "inbox" && <InboxPage />}
-      {route.page === "sessions" && <SessionsPage />}
-      {route.page === "products" && <ProductsPage />}
-      {route.page === "broadcasts" && <BroadcastsPage />}
+      <Suspense fallback={<div className="page" style={{ padding: "2rem" }}><div className="skeleton" style={{ height: 40, marginBottom: "1rem" }} /><div className="skeleton" style={{ height: 200 }} /></div>}>
+        {route.page === "editor" && (
+          <WorkflowEditor key={route.id} id={route.id} onBack={() => navigate("#/")} />
+        )}
+        {route.page === "list" && <WorkflowList onOpen={(id) => navigate(`#/workflows/${id}`)} />}
+        {route.page === "test-lab" && <TestLab />}
+        {route.page === "executions" && (
+          <ExecutionsPage initialExecutionId={route.execId} />
+        )}
+        {route.page === "experiments" && (
+          <ExperimentsPage
+            selectedId={route.expId}
+            onOpenWorkflow={(id) => navigate(`#/workflows/${id}`)}
+            onSelectExperiment={(id) => navigate(id ? `#/experiments/${id}` : "#/experiments")}
+          />
+        )}
+        {route.page === "inbox" && <InboxPage />}
+        {route.page === "sessions" && <SessionsPage />}
+        {route.page === "products" && <ProductsPage />}
+        {route.page === "broadcasts" && <BroadcastsPage />}
+      </Suspense>
     </>
   );
 }

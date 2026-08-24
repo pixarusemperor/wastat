@@ -1,15 +1,11 @@
-import { readFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import { buildApp } from "./app.js";
 import { makeWasenderTransport, markMessageAsRead, sendPresenceUpdate, openDb } from "./wasender.js";
+import { createDatabaseClient } from "./db/client.js";
 
-const dbPath = process.env.DB_PATH ?? "wastat.db";
-try {
-  mkdirSync(dirname(dbPath), { recursive: true });
-} catch {}
-const db = openDb(dbPath);
-db.exec(readFileSync(new URL("./db/schema.sql", import.meta.url), "utf8"));
+const dbClient = await createDatabaseClient();
+console.log(`[DB] Database initialized successfully using provider: ${dbClient.provider}`);
+
+const db = dbClient.sqlite ?? openDb(process.env.DB_PATH ?? "wastat.db");
 
 // ponytail: session API keys are read as plaintext until the encryption
 // decision lands; the column is already BLOB so it upgrades in place.

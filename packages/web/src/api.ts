@@ -20,6 +20,7 @@ export interface ChatMessage {
   text: string | null;
   status: string;
   timestamp: string;
+  mediaUrl?: string | null;
   workflowExecutionId?: number | null;
   nodeKey?: string | null;
   inReplyToId?: number | null;

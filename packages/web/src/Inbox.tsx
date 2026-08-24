@@ -233,6 +233,11 @@ export function InboxPage() {
   const [sendingManual, setSendingManual] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(DEMO_LEADS[0].suggestedAiReply ?? null);
 
+  // Media interaction state
+  const [playingAudioId, setPlayingAudioId] = useState<number | null>(null);
+  const [audioSpeed, setAudioSpeed] = useState<1 | 1.5 | 2>(1);
+  const [previewMedia, setPreviewMedia] = useState<{ type: "image" | "video"; url: string; title?: string } | null>(null);
+
   // Inline attribute state
   const [attrKey, setAttrKey] = useState("");
   const [attrVal, setAttrVal] = useState("");
@@ -695,9 +700,75 @@ export function InboxPage() {
                               </div>
                             )}
 
+                            {/* Rich Media: Image Card */}
+                            {m.messageType === "image" && (
+                              <div style={{ marginBottom: "0.5rem" }}>
+                                <div
+                                  style={{
+                                    borderRadius: "8px",
+                                    overflow: "hidden",
+                                    background: "rgba(0,0,0,0.2)",
+                                    cursor: "pointer",
+                                    border: "1px solid rgba(255,255,255,0.1)",
+                                    maxHeight: 240,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                  }}
+                                  onClick={() => setPreviewMedia({ type: "image", url: m.mediaUrl ?? "https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800", title: m.text ?? undefined })}
+                                >
+                                  <img
+                                    src={m.mediaUrl ?? "https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800"}
+                                    alt={m.text ?? "WhatsApp Image"}
+                                    style={{ width: "100%", maxHeight: 240, objectFit: "cover" }}
+                                  />
+                                </div>
+                                {m.text && (
+                                  <div style={{ marginTop: "0.375rem", fontSize: "0.84375rem", lineHeight: "1.4" }}>
+                                    {m.text}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Rich Media: Document / PDF Card */}
+                            {m.messageType === "document" && (
+                              <div
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "0.75rem",
+                                  background: "rgba(0,0,0,0.15)",
+                                  padding: "0.625rem 0.875rem",
+                                  borderRadius: "8px",
+                                  border: "1px solid rgba(255,255,255,0.08)",
+                                  marginBottom: "0.375rem",
+                                }}
+                              >
+                                <div style={{ fontSize: "1.75rem" }}>📄</div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: "0.8125rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                    {m.text || "Document Attachment.pdf"}
+                                  </div>
+                                  <div style={{ fontSize: "0.6875rem", color: "var(--text-muted)" }}>
+                                    PDF • 2.4 MB
+                                  </div>
+                                </div>
+                                <a
+                                  href={m.mediaUrl ?? "#"}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="btn btn-xs btn-primary"
+                                  style={{ textDecoration: "none", padding: "3px 8px" }}
+                                >
+                                  Open
+                                </a>
+                              </div>
+                            )}
+
                             {/* Rich Media: Video Card */}
                             {m.messageType === "video" && (
-                              <div className="media-card-video">
+                              <div className="media-card-video" style={{ cursor: "pointer" }} onClick={() => setPreviewMedia({ type: "video", url: m.mediaUrl ?? "", title: m.text ?? undefined })}>
                                 <div className="media-thumbnail-preview">
                                   <div style={{ width: 44, height: 44, borderRadius: "50%", background: "rgba(255, 255, 255, 0.25)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                                     <PlayIcon style={{ width: 20, height: 20, color: "#ffffff", marginLeft: "2px" }} />
@@ -715,30 +786,45 @@ export function InboxPage() {
                             {/* Rich Media: Audio Voice Note Card */}
                             {m.messageType === "audio" && (
                               <div className="media-card-audio">
-                                <button className="btn btn-xs btn-primary" style={{ borderRadius: "50%", width: 28, height: 28, padding: 0 }}>
-                                  <PlayIcon style={{ width: 12, height: 12, marginLeft: "2px" }} />
+                                <button
+                                  className="btn btn-xs btn-primary"
+                                  style={{ borderRadius: "50%", width: 28, height: 28, padding: 0 }}
+                                  onClick={() => setPlayingAudioId(playingAudioId === m.id ? null : m.id)}
+                                >
+                                  {playingAudioId === m.id ? (
+                                    <PauseIcon style={{ width: 12, height: 12 }} />
+                                  ) : (
+                                    <PlayIcon style={{ width: 12, height: 12, marginLeft: "2px" }} />
+                                  )}
                                 </button>
                                 <div className="audio-waveform-bars">
-                                  <span className="audio-bar" style={{ height: "40%" }} />
-                                  <span className="audio-bar" style={{ height: "70%" }} />
-                                  <span className="audio-bar" style={{ height: "100%" }} />
-                                  <span className="audio-bar" style={{ height: "60%" }} />
-                                  <span className="audio-bar" style={{ height: "85%" }} />
-                                  <span className="audio-bar" style={{ height: "45%" }} />
-                                  <span className="audio-bar" style={{ height: "90%" }} />
-                                  <span className="audio-bar" style={{ height: "30%" }} />
-                                  <span className="audio-bar" style={{ height: "75%" }} />
-                                  <span className="audio-bar" style={{ height: "50%" }} />
+                                  {[40, 70, 100, 60, 85, 45, 90, 30, 75, 50, 65, 80, 55, 95, 40].map((h, i) => (
+                                    <span
+                                      key={i}
+                                      className="audio-bar"
+                                      style={{
+                                        height: `${h}%`,
+                                        background: playingAudioId === m.id ? "#10b981" : "var(--border)",
+                                      }}
+                                    />
+                                  ))}
                                 </div>
+                                <button
+                                  className="btn btn-xs btn-ghost"
+                                  style={{ fontSize: "0.6875rem", padding: "2px 4px", fontWeight: 700 }}
+                                  onClick={() => setAudioSpeed(audioSpeed === 1 ? 1.5 : audioSpeed === 1.5 ? 2 : 1)}
+                                >
+                                  {audioSpeed}x
+                                </button>
                                 <span style={{ fontSize: "0.6875rem", color: "var(--text-muted)", fontWeight: 600 }}>
                                   0:45
                                 </span>
-                                <MicIcon style={{ width: 14, height: 14, color: "var(--primary)" }} />
+                                <MicIcon style={{ width: 14, height: 14, color: playingAudioId === m.id ? "#10b981" : "#53bdeb" }} />
                               </div>
                             )}
 
-                            {/* Standard Text Message Body */}
-                            {m.messageType !== "video" && m.messageType !== "audio" && (
+                            {/* Standard Text & Numbered Menu Message Body */}
+                            {m.messageType !== "video" && m.messageType !== "audio" && m.messageType !== "image" && m.messageType !== "document" && (
                               <div style={{ fontSize: "0.84375rem", lineHeight: "1.45", whiteSpace: "pre-wrap" }}>
                                 {m.text}
                               </div>
@@ -939,6 +1025,38 @@ export function InboxPage() {
             }
           }}
         />
+      </Dialog>
+
+      {/* Media Lightbox Modal */}
+      <Dialog
+        open={previewMedia !== null}
+        onClose={() => setPreviewMedia(null)}
+        labelledBy="media-lightbox-title"
+      >
+        <div className="modal-body" style={{ maxWidth: 640, textAlign: "center", padding: "1rem" }}>
+          <h3 id="media-lightbox-title" style={{ margin: "0 0 1rem", fontSize: "1rem" }}>
+            {previewMedia?.title || (previewMedia?.type === "video" ? "Video Playback" : "Image Preview")}
+          </h3>
+          {previewMedia?.type === "video" ? (
+            <video
+              src={previewMedia.url}
+              controls
+              autoPlay
+              style={{ width: "100%", maxHeight: "70vh", borderRadius: "8px", background: "#000" }}
+            />
+          ) : previewMedia?.type === "image" ? (
+            <img
+              src={previewMedia.url}
+              alt="Preview"
+              style={{ width: "100%", maxHeight: "70vh", objectFit: "contain", borderRadius: "8px" }}
+            />
+          ) : null}
+          <div style={{ marginTop: "1rem", display: "flex", justifyContent: "flex-end" }}>
+            <button className="btn btn-sm btn-primary" onClick={() => setPreviewMedia(null)}>
+              Close
+            </button>
+          </div>
+        </div>
       </Dialog>
     </main>
   );

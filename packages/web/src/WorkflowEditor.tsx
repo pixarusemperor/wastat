@@ -809,11 +809,47 @@ export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void 
     showToast("Layout refreshed");
   }
 
+  const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved");
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isInitialMount = useRef(true);
+
+  // Debounced auto-save & localStorage draft shield
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+
+    setSaveStatus("unsaved");
+    try {
+      const draftGraph = fromFlow({ nodes, edges }, meta);
+      localStorage.setItem(`wastat_draft_${id}`, JSON.stringify(draftGraph));
+    } catch {}
+
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(async () => {
+      setSaveStatus("saving");
+      try {
+        await api.saveWorkflow(id, fromFlow({ nodes, edges }, meta));
+        setSaveStatus("saved");
+      } catch {
+        setSaveStatus("unsaved");
+      }
+    }, 1500);
+
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
+  }, [nodes, edges, meta, id]);
+
   async function save() {
+    setSaveStatus("saving");
     try {
       await api.saveWorkflow(id, fromFlow({ nodes, edges }, meta));
+      setSaveStatus("saved");
       showToast("Workflow saved successfully");
     } catch {
+      setSaveStatus("unsaved");
       showToast("Save failed — check your connection and retry", true);
     }
   }
@@ -909,6 +945,21 @@ export function WorkflowEditor({ id, onBack }: { id: string; onBack: () => void 
         >
           ⚡ Traces
         </a>
+
+        {/* Auto-Save Status Badge */}
+        <span
+          style={{
+            fontSize: "0.75rem",
+            fontWeight: 600,
+            padding: "2px 8px",
+            borderRadius: "4px",
+            background: saveStatus === "saving" ? "rgba(245, 158, 11, 0.15)" : saveStatus === "saved" ? "rgba(16, 185, 129, 0.15)" : "rgba(239, 68, 68, 0.15)",
+            color: saveStatus === "saving" ? "#f59e0b" : saveStatus === "saved" ? "#10b981" : "#ef4444",
+            border: `1px solid ${saveStatus === "saving" ? "rgba(245, 158, 11, 0.3)" : saveStatus === "saved" ? "rgba(16, 185, 129, 0.3)" : "rgba(239, 68, 68, 0.3)"}`,
+          }}
+        >
+          {saveStatus === "saving" ? "⏳ Auto-saving..." : saveStatus === "saved" ? "✓ Saved" : "● Unsaved"}
+        </span>
 
         <label className="switch">
           <input

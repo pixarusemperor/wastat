@@ -43,9 +43,52 @@ export function WorkflowList({ onOpen }: { onOpen: (id: string) => void }) {
     }
   }
 
-  useEffect(() => {
-    void refresh();
-  }, []);
+  async function handleExportAll() {
+    try {
+      const wfs = await api.listWorkflows();
+      const detailed = await Promise.all(wfs.map((w) => api.getWorkflow(String(w.id))));
+      const blob = new Blob([JSON.stringify({ version: "wastat_v2", exportedAt: new Date().toISOString(), workflows: detailed }, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `wastat_workflows_backup_${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(`Export failed: ${e}`);
+    }
+  }
+
+  async function handleImportAll(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const list = Array.isArray(data) ? data : data.workflows;
+      if (!Array.isArray(list)) throw new Error("Invalid backup format");
+      for (const item of list) {
+        const created = await api.createWorkflow(item.name ?? "Imported Workflow", item.experimentId, item.sessionId);
+        await api.saveWorkflow(String(created.id), {
+          name: item.name ?? "Imported Workflow",
+          description: item.description,
+          active: item.active ?? 0,
+          sessionId: item.sessionId ?? null,
+          experimentId: item.experimentId ?? null,
+          nodes: item.nodes ?? [],
+          edges: item.edges ?? [],
+        });
+      }
+      alert(`Successfully imported ${list.length} workflow(s)!`);
+      await refresh();
+    } catch (e) {
+      alert(`Import failed: ${e}`);
+    } finally {
+      e.target.value = "";
+    }
+  }
 
   return (
     <main className="page">
@@ -54,9 +97,18 @@ export function WorkflowList({ onOpen }: { onOpen: (id: string) => void }) {
           <h1>Workflows</h1>
           <p className="page-subtitle">Automations that reply to incoming WhatsApp messages with human-like delays.</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setCreating(true)}>
-          New workflow
-        </button>
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+          <button className="btn btn-ghost btn-sm" onClick={handleExportAll} title="Export all workflows as JSON">
+            📥 Export JSON
+          </button>
+          <label className="btn btn-ghost btn-sm" style={{ cursor: "pointer" }} title="Import workflows from JSON backup">
+            📤 Import JSON
+            <input type="file" accept=".json" onChange={handleImportAll} style={{ display: "none" }} />
+          </label>
+          <button className="btn btn-primary" onClick={() => setCreating(true)}>
+            New workflow
+          </button>
+        </div>
       </header>
 
       {error && (

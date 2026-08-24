@@ -65,8 +65,12 @@ export function createR2Storage(config: {
       await s3.send(new DeleteObjectCommand({ Bucket: config.bucketName, Key: key }));
     },
     getPublicUrl(key: string) {
-      if (config.publicUrl) {
-        return `${config.publicUrl.replace(/\/$/, "")}/${key}`;
+      if (config.publicUrl && config.publicUrl.trim()) {
+        let pub = config.publicUrl.trim().replace(/\/$/, "");
+        if (!pub.startsWith("http://") && !pub.startsWith("https://")) {
+          pub = `https://${pub}`;
+        }
+        return `${pub}/${key}`;
       }
       return `https://${config.bucketName}.${config.accountId}.r2.cloudflarestorage.com/${key}`;
     },
