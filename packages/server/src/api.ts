@@ -2,17 +2,38 @@ import type { FastifyInstance } from "fastify";
 import type BetterSqlite3 from "better-sqlite3";
 import { makeWasenderAdmin, upsertSession } from "./wasender-admin.js";
 import type { createEngine } from "./engine.js";
+import { aiRoutes } from "./routes/ai.js";
+import { broadcastRoutes } from "./routes/broadcasts.js";
+import { mcpRoutes } from "./routes/mcp.js";
 
 const NODE_TYPES = new Set([
   "trigger",
   "keyword",
+  "trigger_personal",
+  "trigger_group",
+  "trigger_reaction",
+  "trigger_poll_result",
+  "trigger_call",
+  "trigger_participant",
   "send_text",
   "send_media",
   "send_menu",
+  "send_poll",
+  "send_contact",
+  "send_location",
+  "send_presence",
+  "mark_read",
+  "react_message",
+  "block_contact",
+  "unblock_contact",
+  "upsert_contact",
+  "add_group_participant",
+  "remove_group_participant",
   "collect_input",
   "condition",
   "split_test",
   "delay",
+  "milestone",
   "end",
 ]);
 
@@ -94,6 +115,10 @@ export function registerApiRoutes(
   db: BetterSqlite3.Database,
   opts?: ApiRoutesOptions,
 ): void {
+  void app.register(aiRoutes);
+  void app.register(broadcastRoutes);
+  void app.register(mcpRoutes);
+
   const insertWorkflow = db.prepare(
     "INSERT INTO workflows (name, description, active, experiment_id) VALUES (?, ?, ?, ?)",
   );
@@ -561,4 +586,210 @@ export function registerApiRoutes(
         .all();
     });
   }
+
+  // ============================================================
+  // CRM, Live Inbox & Funnel Management Endpoints
+  // ============================================================
+
+  // List contacts with funnel phase, bot status, and latest message
+  app.get("/api/contacts", async () => {
+    return db.prepare(`
+      SELECT 
+        c.id,
+        c.phone,
+        c.name,
+        c.funnel_phase AS funnelPhase,
+        c.bot_status AS botStatus,
+        c.bot_paused_until AS botPausedUntil,
+        c.created_at AS createdAt,
+        (SELECT text FROM messages WHERE contact_id = c.id ORDER BY id DESC LIMIT 1) AS lastMessageText,
+        (SELECT timestamp FROM messages WHERE contact_id = c.id ORDER BY id DESC LIMIT 1) AS lastMessageTime,
+        (SELECT direction FROM messages WHERE contact_id = c.id ORDER BY id DESC LIMIT 1) AS lastMessageDirection
+      FROM contacts c
+      ORDER BY lastMessageTime DESC, c.id DESC
+    `).all();
+  });
+
+  // Get contact 360 profile with attributes and tags
+  app.get<{ Params: { id: string } }>("/api/contacts/:id", async (request, reply) => {
+    const contactId = Number(request.params.id);
+    const contact = db.prepare(`
+      SELECT id, phone, name, funnel_phase AS funnelPhase, bot_status AS botStatus, bot_paused_until AS botPausedUntil, created_at AS createdAt
+      FROM contacts WHERE id = ?
+    `).get(contactId) as Record<string, unknown> | undefined;
+
+    if (!contact) return reply.code(404).send({ error: "contact not found" });
+
+    const attrRows = db.prepare("SELECT key, value, updated_at AS updatedAt FROM contact_attributes WHERE contact_id = ?").all(contactId) as Array<{ key: string; value: string; updatedAt: string }>;
+    const attributes: Record<string, { value: string; updatedAt: string }> = {};
+    for (const a of attrRows) attributes[a.key] = { value: a.value, updatedAt: a.updatedAt };
+
+    const tagRows = db.prepare("SELECT tag FROM contact_tags WHERE contact_id = ?").all(contactId) as Array<{ tag: string }>;
+    const tags = tagRows.map((t) => t.tag);
+
+    return { ...contact, attributes, tags };
+  });
+
+  // Update bot status (Active <-> Paused Human)
+  app.post<{ Params: { id: string }; Body: { status: "active" | "paused_human" | "opted_out"; pauseHours?: number } }>(
+    "/api/contacts/:id/bot-status",
+    async (request, reply) => {
+      const contactId = Number(request.params.id);
+      const { status, pauseHours = 24 } = request.body ?? {};
+
+      let pausedUntil: string | null = null;
+      if (status === "paused_human") {
+        pausedUntil = new Date(Date.now() + pauseHours * 3600 * 1000).toISOString();
+      }
+
+      db.prepare("UPDATE contacts SET bot_status = ?, bot_paused_until = ? WHERE id = ?").run(
+        status ?? "active",
+        pausedUntil,
+        contactId,
+      );
+
+      return { ok: true, botStatus: status, botPausedUntil: pausedUntil };
+    },
+  );
+
+  // 1-Click Advance to Phase 2
+  app.post<{ Params: { id: string }; Body: { workflowId?: number; notes?: string } }>(
+    "/api/contacts/:id/advance-phase",
+    async (request, reply) => {
+      const contactId = Number(request.params.id);
+      const { workflowId, notes } = request.body ?? {};
+
+      const contact = db.prepare("SELECT * FROM contacts WHERE id = ?").get(contactId) as { phone: string; funnel_phase: string } | undefined;
+      if (!contact) return reply.code(404).send({ error: "contact not found" });
+
+      const fromPhase = contact.funnel_phase;
+      const toPhase = "phase_2_active";
+
+      db.prepare(`
+        UPDATE contacts 
+        SET funnel_phase = ?, bot_status = 'active', bot_paused_until = NULL 
+        WHERE id = ?
+      `).run(toPhase, contactId);
+
+      db.prepare(`
+        INSERT INTO funnel_transitions (contact_id, from_phase, to_phase, triggered_by, operator_notes)
+        VALUES (?, ?, ?, 'human_operator', ?)
+      `).run(contactId, fromPhase, toPhase, notes ?? null);
+
+      // Trigger Phase 2 Workflow if provided or if found in experiment
+      if (workflowId && opts?.engine) {
+        const session = db.prepare("SELECT session_id FROM messages WHERE contact_id = ? ORDER BY id DESC LIMIT 1").get(contactId) as { session_id: number } | undefined;
+        const sessionId = session?.session_id ?? 1;
+        opts.engine.startExecution(workflowId, sessionId, contactId);
+      }
+
+      return { ok: true, funnelPhase: toPhase };
+    },
+  );
+
+  // Private Notes for Conversation Thread
+  app.get<{ Params: { id: string } }>("/api/contacts/:id/notes", async (request) => {
+    const contactId = Number(request.params.id);
+    return db.prepare("SELECT id, contact_id AS contactId, author, body, created_at AS createdAt FROM private_notes WHERE contact_id = ? ORDER BY id ASC").all(contactId);
+  });
+
+  app.post<{ Params: { id: string }; Body: { body: string; author?: string } }>(
+    "/api/contacts/:id/notes",
+    async (request, reply) => {
+      const contactId = Number(request.params.id);
+      const { body, author = "operator" } = request.body ?? {};
+      if (!body || !body.trim()) return reply.code(400).send({ error: "body is required" });
+
+      const info = db.prepare("INSERT INTO private_notes (contact_id, author, body) VALUES (?, ?, ?)").run(contactId, author, body.trim());
+      return { ok: true, id: Number(info.lastInsertRowid) };
+    },
+  );
+
+  // Conversation Message Thread
+  app.get<{ Params: { id: string } }>("/api/contacts/:id/messages", async (request) => {
+    const contactId = Number(request.params.id);
+    return db.prepare(`
+      SELECT 
+        m.id,
+        m.session_id AS sessionId,
+        m.contact_id AS contactId,
+        m.direction,
+        m.message_type AS messageType,
+        m.text,
+        m.media_id AS mediaId,
+        m.status,
+        m.timestamp,
+        m.workflow_execution_id AS workflowExecutionId,
+        m.node_key AS nodeKey
+      FROM messages m
+      WHERE m.contact_id = ?
+      ORDER BY m.id ASC
+    `).all(contactId);
+  });
+
+  // Operator manual send (auto-pauses bot for 24h)
+  app.post<{ Params: { id: string }; Body: { text: string; sessionId?: number } }>(
+    "/api/contacts/:id/messages",
+    async (request, reply) => {
+      const contactId = Number(request.params.id);
+      const { text, sessionId } = request.body ?? {};
+      if (!text || !text.trim()) return reply.code(400).send({ error: "text is required" });
+
+      const contact = db.prepare("SELECT phone FROM contacts WHERE id = ?").get(contactId) as { phone: string } | undefined;
+      if (!contact) return reply.code(404).send({ error: "contact not found" });
+
+      const sid = sessionId ?? 1;
+      const pausedUntil = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+
+      // Set bot status to paused_human
+      db.prepare("UPDATE contacts SET bot_status = 'paused_human', bot_paused_until = ? WHERE id = ?").run(pausedUntil, contactId);
+
+      // Record outbound message in SQLite
+      const info = db.prepare(`
+        INSERT INTO messages (session_id, contact_id, direction, message_type, text, status, timestamp)
+        VALUES (?, ?, 'out', 'text', ?, 'sent', ?)
+      `).run(sid, contactId, text.trim(), new Date().toISOString());
+
+      return { ok: true, messageId: Number(info.lastInsertRowid), botStatus: "paused_human", botPausedUntil: pausedUntil };
+    },
+  );
+
+  // Multi-Stage Funnel & Variant Statistics Endpoint
+  app.get<{ Params: { id: string } }>("/api/experiments/:id/funnel", async (request, reply) => {
+    const experimentId = Number(request.params.id);
+    const workflows = db.prepare("SELECT id, name FROM workflows WHERE experiment_id = ?").all(experimentId) as Array<{ id: number; name: string }>;
+
+    const funnelStages = workflows.map((wf) => {
+      const stats = db.prepare(`
+        SELECT 
+          COUNT(DISTINCT we.id) AS totalExecutions,
+          COUNT(DISTINCT CASE WHEN m.direction = 'out' THEN m.contact_id END) AS totalSent,
+          COUNT(DISTINCT CASE WHEN m.direction = 'out' AND m.status IN ('delivered', 'read') THEN m.contact_id END) AS totalDelivered,
+          COUNT(DISTINCT CASE WHEN m.direction = 'out' AND m.status = 'read' THEN m.contact_id END) AS totalRead,
+          COUNT(DISTINCT CASE WHEN m_in.id IS NOT NULL AND m_in.timestamp <= we.reply_window_expires_at THEN m_in.contact_id END) AS organic2hReplies,
+          COUNT(DISTINCT CASE WHEN we.silence_sweep_executed = 1 AND m_in.id IS NOT NULL AND m_in.timestamp > we.reply_window_expires_at THEN m_in.contact_id END) AS silenceReactivations,
+          COUNT(DISTINCT fc.id) AS qualifiedConversions
+        FROM workflows w
+        LEFT JOIN workflow_executions we ON we.workflow_id = w.id
+        LEFT JOIN messages m ON m.workflow_execution_id = we.id
+        LEFT JOIN messages m_in ON m_in.in_reply_to_id = m.id
+        LEFT JOIN funnel_conversions fc ON fc.workflow_id = w.id
+        WHERE w.id = ?
+      `).get(wf.id) as Record<string, number>;
+
+      return {
+        workflowId: wf.id,
+        name: wf.name,
+        totalExecutions: stats.totalExecutions ?? 0,
+        totalSent: stats.totalSent ?? 0,
+        totalDelivered: stats.totalDelivered ?? 0,
+        totalRead: stats.totalRead ?? 0,
+        organic2hReplies: stats.organic2hReplies ?? 0,
+        silenceReactivations: stats.silenceReactivations ?? 0,
+        qualifiedConversions: stats.qualifiedConversions ?? 0,
+      };
+    });
+
+    return { experimentId, variants: funnelStages };
+  });
 }

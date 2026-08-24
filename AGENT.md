@@ -1,0 +1,1 @@
+/home/stevenjossu/wastat/AGENTS.md

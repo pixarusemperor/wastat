@@ -170,7 +170,52 @@ export type WorkflowNodeType =
   | "condition"
   | "split_test"
   | "delay"
+  | "milestone"
   | "end";
+
+export interface MilestoneNodeConfig {
+  milestoneKey: string;
+  milestoneName: string;
+  value?: number;
+}
+
+export type FunnelPhase =
+  | "unassigned"
+  | "phase_1_active"
+  | "phase_1_waiting_answer"
+  | "objection_review"
+  | "phase_1_qualified"
+  | "phase_2_active"
+  | "completed"
+  | "lost";
+
+export type BotStatus = "active" | "paused_human" | "opted_out";
+
+export interface ContactAttribute {
+  id?: number;
+  contactId: number;
+  key: string;
+  value: string;
+  updatedAt?: string;
+}
+
+export interface PrivateNote {
+  id?: number;
+  contactId: number;
+  author: string;
+  body: string;
+  createdAt?: string;
+}
+
+export interface FunnelTransition {
+  id?: number;
+  contactId: number;
+  fromPhase: FunnelPhase;
+  toPhase: FunnelPhase;
+  triggeredBy: "auto_rule" | "ai_classifier" | "human_operator";
+  operatorNotes?: string;
+  transitionedAt?: string;
+}
 
 export interface WorkflowNodeItem {
   nodeKey: string;
@@ -183,7 +228,7 @@ export interface WorkflowNodeItem {
 export interface WorkflowEdgeItem {
   sourceKey: string;
   targetKey: string;
-  handle?: string; // e.g. 'true', 'false', '1', '2', 'opt_1'
+  handle?: string; // e.g. 'true', 'false', '1', '2', 'on_reply', 'on_silence_2h'
 }
 
 export interface WorkflowDefinition {

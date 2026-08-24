@@ -266,6 +266,15 @@ export const WASENDER_ACTIONS: ProviderActionDef[] = [
     endpoint: { method: "POST", path: "/flow/delay" },
   },
   {
+    id: "milestone",
+    name: "Funnel Goal / Milestone",
+    category: "flow",
+    description: "Record a funnel conversion milestone (e.g. Lead Qualified, Call Booked).",
+    icon: "🎯",
+    badgeColor: "#8b5cf6",
+    endpoint: { method: "POST", path: "/flow/milestone" },
+  },
+  {
     id: "end",
     name: "End Flow",
     category: "flow",

@@ -632,6 +632,148 @@ describe("engine", () => {
       // Check stored vars in DB
       const exec = db.prepare("SELECT vars FROM workflow_executions WHERE id = ?").get(execId) as any;
       expect(JSON.parse(exec.vars)).toEqual({ user_name: "Steven Jossu" });
+
+      // Check persistent attribute in contact_attributes table (Customer 360)
+      const attr = db.prepare("SELECT value FROM contact_attributes WHERE contact_id = ? AND key = 'user_name'").get(contactId) as any;
+      expect(attr?.value).toBe("Steven Jossu");
+    });
+
+    it("evaluates Spintax anti-ban templates and custom attributes during send_text", async () => {
+      const { db, engine, sent } = setup();
+      const wf = db.prepare("INSERT INTO workflows (name, active) VALUES ('spintax_wf', 1)").run();
+      const wfId = Number(wf.lastInsertRowid);
+
+      const insNode = db.prepare("INSERT INTO workflow_nodes (workflow_id, node_key, type, config) VALUES (?, ?, ?, ?)");
+      insNode.run(wfId, "t", "trigger", "{}");
+      insNode.run(wfId, "msg", "send_text", JSON.stringify({
+        text: "{Hello|Hi} {{contact.name}}, your tier is {{contact.tier}}!",
+      }));
+      insNode.run(wfId, "e", "end", "{}");
+
+      const insEdge = db.prepare("INSERT INTO workflow_edges (workflow_id, source_key, target_key) VALUES (?, ?, ?)");
+      insEdge.run(wfId, "t", "msg");
+      insEdge.run(wfId, "msg", "e");
+
+      const { sessionId, contactId } = seedContactSession(db);
+      db.prepare("UPDATE contacts SET name = 'Alice' WHERE id = ?").run(contactId);
+      db.prepare("INSERT INTO contact_attributes (contact_id, key, value) VALUES (?, 'tier', 'VIP')").run(contactId);
+
+      engine.startExecution(wfId, sessionId, contactId);
+      await engine.scheduler.tick();
+
+      expect(sent.length).toBe(1);
+      expect(sent[0].text).toMatch(/^(Hello|Hi) Alice, your tier is VIP!$/);
+    });
+
+    it("triggers 2-hour silence follow-up sweep when user does not reply", async () => {
+      const { db, clock, engine, sent } = setup();
+      const wf = db.prepare("INSERT INTO workflows (name, active) VALUES ('silence_wf', 1)").run();
+      const wfId = Number(wf.lastInsertRowid);
+
+      const insNode = db.prepare("INSERT INTO workflow_nodes (workflow_id, node_key, type, config) VALUES (?, ?, ?, ?)");
+      insNode.run(wfId, "t", "trigger", JSON.stringify({ keywords: ["quote"] }));
+      insNode.run(wfId, "q", "collect_input", JSON.stringify({ promptText: "Which product?", varKey: "prod" }));
+      insNode.run(wfId, "reply_path", "send_text", JSON.stringify({ text: "Got your product choice!" }));
+      insNode.run(wfId, "nudge_path", "send_text", JSON.stringify({ text: "Still there? We have limited stock." }));
+      insNode.run(wfId, "e", "end", "{}");
+
+      const insEdge = db.prepare("INSERT INTO workflow_edges (workflow_id, source_key, target_key, handle) VALUES (?, ?, ?, ?)");
+      insEdge.run(wfId, "t", "q", null);
+      insEdge.run(wfId, "q", "reply_path", "on_reply");
+      insEdge.run(wfId, "q", "nudge_path", "on_silence_2h");
+      insEdge.run(wfId, "reply_path", "e", null);
+      insEdge.run(wfId, "nudge_path", "e", null);
+
+      const { sessionId, contactId } = seedContactSession(db);
+
+      // Inbound trigger "quote"
+      const insMsg = db.prepare("INSERT INTO messages (session_id, contact_id, direction, message_type, text, timestamp) VALUES (?, ?, 'in', 'text', 'quote', '2026-08-24T00:00:00Z')").run(sessionId, contactId);
+      const execId = engine.handleIncomingMessage(sessionId, contactId, Number(insMsg.lastInsertRowid))!;
+
+      await engine.scheduler.tick();
+      expect(sent).toContainEqual({
+        sessionId,
+        toPhone: "+15550001",
+        kind: "text",
+        text: "Which product?",
+      });
+
+      // User stays silent for 2 hours and 1 minute (7260 seconds)
+      clock.advance(7260 * 1000);
+      sent.length = 0;
+
+      // Run silence sweep
+      const sweepResult = await engine.runSilenceSweep(clock);
+      expect(sweepResult.scanned).toBe(1);
+      expect(sweepResult.nudged).toBe(1);
+
+      // Process nudge message send
+      await engine.scheduler.tick();
+      expect(sent).toContainEqual({
+        sessionId,
+        toPhone: "+15550001",
+        kind: "text",
+        text: "Still there? We have limited stock.",
+      });
+
+      // Check DB execution updated
+      const exec = db.prepare("SELECT silence_sweep_executed FROM workflow_executions WHERE id = ?").get(execId) as any;
+      expect(exec.silence_sweep_executed).toBe(1);
+    });
+
+    it("records milestone conversion on milestone node", async () => {
+      const { db, engine } = setup();
+      const wf = db.prepare("INSERT INTO workflows (name, active) VALUES ('milestone_wf', 1)").run();
+      const wfId = Number(wf.lastInsertRowid);
+
+      const insNode = db.prepare("INSERT INTO workflow_nodes (workflow_id, node_key, type, config) VALUES (?, ?, ?, ?)");
+      insNode.run(wfId, "t", "trigger", "{}");
+      insNode.run(wfId, "m", "milestone", JSON.stringify({ milestoneKey: "lead_qualified", milestoneName: "Lead Qualified", value: 50 }));
+      insNode.run(wfId, "e", "end", "{}");
+
+      const insEdge = db.prepare("INSERT INTO workflow_edges (workflow_id, source_key, target_key) VALUES (?, ?, ?)");
+      insEdge.run(wfId, "t", "m");
+      insEdge.run(wfId, "m", "e");
+
+      const { sessionId, contactId } = seedContactSession(db);
+      const execId = engine.startExecution(wfId, sessionId, contactId);
+
+      await engine.scheduler.tick();
+
+      const conv = db.prepare("SELECT * FROM funnel_conversions WHERE execution_id = ?").get(execId) as any;
+      expect(conv).toBeDefined();
+      expect(conv.milestone_key).toBe("lead_qualified");
+      expect(conv.value).toBe(50);
+    });
+
+    it("pauses execution when contact bot_status is paused_human (Human Takeover)", async () => {
+      const { db, engine, sent } = setup();
+      const wf = db.prepare("INSERT INTO workflows (name, active) VALUES ('takeover_wf', 1)").run();
+      const wfId = Number(wf.lastInsertRowid);
+
+      const insNode = db.prepare("INSERT INTO workflow_nodes (workflow_id, node_key, type, config) VALUES (?, ?, ?, ?)");
+      insNode.run(wfId, "t", "trigger", "{}");
+      insNode.run(wfId, "s", "send_text", JSON.stringify({ text: "Automated greeting" }));
+      insNode.run(wfId, "e", "end", "{}");
+
+      const insEdge = db.prepare("INSERT INTO workflow_edges (workflow_id, source_key, target_key) VALUES (?, ?, ?)");
+      insEdge.run(wfId, "t", "s");
+      insEdge.run(wfId, "s", "e");
+
+      const { sessionId, contactId } = seedContactSession(db);
+      // Human operator takeover: pause bot for 24h
+      const futureIso = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+      db.prepare("UPDATE contacts SET bot_status = 'paused_human', bot_paused_until = ? WHERE id = ?").run(futureIso, contactId);
+
+      const execId = engine.startExecution(wfId, sessionId, contactId);
+      await engine.scheduler.tick();
+
+      // No message should be sent
+      expect(sent.length).toBe(0);
+
+      // Execution status should be paused_human
+      const exec = db.prepare("SELECT status FROM workflow_executions WHERE id = ?").get(execId) as any;
+      expect(exec.status).toBe("paused_human");
     });
   });
 });

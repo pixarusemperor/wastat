@@ -18,6 +18,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import type { WorkflowNodeType } from "@wastat/shared";
 import { api } from "./api.js";
 import { fromFlow, toFlow, type GraphNode, type GraphNodeData } from "./graph.js";
 
@@ -52,6 +53,7 @@ export const NODE_TYPES = [
   "condition",
   "split_test",
   "delay",
+  "milestone",
   "end",
 ] as const;
 
@@ -99,12 +101,13 @@ export const PALETTE_CATEGORIES = [
       "condition",
       "split_test",
       "delay",
+      "milestone",
       "end",
     ] as (typeof NODE_TYPES)[number][],
   },
 ];
 
-export const NODE_LABELS: Record<(typeof NODE_TYPES)[number], string> = {
+export const NODE_LABELS: Record<WorkflowNodeType, string> = {
   trigger: "Message Received (Any)",
   keyword: "Keyword Match",
   trigger_personal: "Direct Message",
@@ -131,10 +134,11 @@ export const NODE_LABELS: Record<(typeof NODE_TYPES)[number], string> = {
   condition: "Condition (If/Else)",
   split_test: "A/B Split Test",
   delay: "Delay / Wait",
+  milestone: "Funnel Milestone",
   end: "End Flow",
 };
 
-export const NODE_ICONS: Record<(typeof NODE_TYPES)[number], string> = {
+export const NODE_ICONS: Record<WorkflowNodeType, string> = {
   trigger: "⚡",
   keyword: "🔍",
   trigger_personal: "💬",
@@ -161,10 +165,11 @@ export const NODE_ICONS: Record<(typeof NODE_TYPES)[number], string> = {
   condition: "🔀",
   split_test: "🎲",
   delay: "⏳",
+  milestone: "🎯",
   end: "🏁",
 };
 
-export const NODE_THEMES: Record<(typeof NODE_TYPES)[number], { border: string; bg: string; badge: string }> = {
+export const NODE_THEMES: Record<WorkflowNodeType, { border: string; bg: string; badge: string }> = {
   trigger: { border: "#10b981", bg: "#ecfdf5", badge: "#059669" },
   keyword: { border: "#06b6d4", bg: "#ecfeff", badge: "#0891b2" },
   trigger_personal: { border: "#059669", bg: "#ecfdf5", badge: "#047857" },
@@ -191,6 +196,7 @@ export const NODE_THEMES: Record<(typeof NODE_TYPES)[number], { border: string; 
   condition: { border: "#f97316", bg: "#fff7ed", badge: "#ea580c" },
   split_test: { border: "#6366f1", bg: "#eef2ff", badge: "#4f46e5" },
   delay: { border: "#eab308", bg: "#fefce8", badge: "#ca8a04" },
+  milestone: { border: "#8b5cf6", bg: "#f5f3ff", badge: "#7c3aed" },
   end: { border: "#64748b", bg: "#f8fafc", badge: "#475569" },
 };
 
@@ -269,6 +275,8 @@ export function defaultConfig(type: (typeof NODE_TYPES)[number]): Record<string,
       };
     case "delay":
       return { mode: "fixed", seconds: 30 };
+    case "milestone":
+      return { milestoneKey: "lead_qualified", milestoneName: "Lead Qualified", value: 1 };
     default:
       return {};
   }

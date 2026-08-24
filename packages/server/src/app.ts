@@ -31,9 +31,10 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
   const app = Fastify({ logger: true });
   const engine = createEngine(db, { clock: deps.clock ?? realClock, sendMessage: deps.sendMessage });
 
-  // Background worker poller for delayed jobs and rate-limited sends (PRD §13, §24)
+  // Background worker poller for delayed jobs and silence sweeps (PRD §13, §24)
   const poller = setInterval(() => {
     void engine.scheduler.tick();
+    void engine.runSilenceSweep();
   }, 1000);
 
   app.addHook("onClose", async () => {

@@ -2,11 +2,13 @@ import type BetterSqlite3 from "better-sqlite3";
 import {
   evaluateMatch,
   normalize,
+  parseSpintax,
   type KeywordMatchConfig,
   type ConditionNodeConfig,
   type SendMenuNodeConfig,
   type CollectInputNodeConfig,
   type SplitTestNodeConfig,
+  type MilestoneNodeConfig,
 } from "@wastat/shared";
 import { realClock, createScheduler, type Clock, type JobRow } from "./scheduler.js";
 import { buildTextMenu } from "./wasender.js";
@@ -27,15 +29,17 @@ export interface EngineDeps {
 }
 
 /**
- * Interpolates {{vars.key}}, {{contact.phone}}, {{contact.name}} templates.
+ * Interpolates Spintax {A|B} and {{vars.key}}, {{contact.phone}}, {{contact.name}}, {{contact.attribute}} templates.
  */
 export function interpolateVariables(
   template: string,
   vars: Record<string, unknown> = {},
-  contact?: { phone?: string; name?: string },
+  contact?: { phone?: string; name?: string; attributes?: Record<string, string> },
+  rng: () => number = Math.random,
 ): string {
   if (!template) return "";
-  return template.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_, key) => {
+  // 1. Interpolate {{variables}} first
+  const interpolated = template.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_, key) => {
     if (key.startsWith("vars.")) {
       const varName = key.slice(5);
       return vars[varName] != null ? String(vars[varName]) : "";
@@ -44,9 +48,18 @@ export function interpolateVariables(
       const contactKey = key.slice(8);
       if (contactKey === "phone") return contact?.phone ?? "";
       if (contactKey === "name") return contact?.name ?? "";
+      if (contact?.attributes && contact.attributes[contactKey] != null) {
+        return contact.attributes[contactKey];
+      }
+    }
+    if (contact?.attributes && contact.attributes[key] != null) {
+      return contact.attributes[key];
     }
     return vars[key] != null ? String(vars[key]) : "";
   });
+
+  // 2. Resolve Spintax {A|B} variations
+  return parseSpintax(interpolated, rng);
 }
 
 /**
@@ -145,10 +158,28 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
   }
 
   function setWaitingInput(executionId: number, currentKey: string) {
-    updateExecution.run("waiting_input", currentKey, null, executionId);
+    const silenceIso = new Date(clock.now() + 2 * 3600 * 1000).toISOString();
+    db.prepare(`
+      UPDATE workflow_executions
+      SET status = 'waiting_input',
+          current_node_key = ?,
+          silence_followup_at = ?,
+          reply_window_expires_at = ?,
+          silence_sweep_executed = 0,
+          finished_at = NULL
+      WHERE id = ?
+    `).run(currentKey, silenceIso, silenceIso, executionId);
   }
 
-  const getContact = db.prepare("SELECT phone, name FROM contacts WHERE id = ?");
+  function getContactWithAttributes(contactId: number) {
+    const contact = db.prepare("SELECT phone, name, funnel_phase, bot_status, bot_paused_until FROM contacts WHERE id = ?").get(contactId) as { phone?: string; name?: string; funnel_phase?: string; bot_status?: string; bot_paused_until?: string | null } | undefined;
+    if (!contact) return undefined;
+    const rows = db.prepare("SELECT key, value FROM contact_attributes WHERE contact_id = ?").all(contactId) as Array<{ key: string; value: string }>;
+    const attributes: Record<string, string> = {};
+    for (const r of rows) attributes[r.key] = r.value;
+    return { ...contact, attributes };
+  }
+
   const insertMessage = db.prepare(`
     INSERT INTO messages (session_id, contact_id, direction, message_type, text, provider_message_id, workflow_execution_id, node_key, status, timestamp)
     VALUES (?, ?, 'out', ?, ?, ?, ?, ?, 'sent', ?)
@@ -170,12 +201,20 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
       | undefined;
     if (!exec || exec.status !== "running") return;
 
+    const contact = getContactWithAttributes(exec.contact_id);
+    if (contact && contact.bot_status === "paused_human") {
+      if (contact.bot_paused_until && new Date(contact.bot_paused_until).getTime() > clock.now()) {
+        db.prepare("UPDATE workflow_executions SET status = 'paused_human' WHERE id = ?").run(executionId);
+        return;
+      } else {
+        db.prepare("UPDATE contacts SET bot_status = 'active', bot_paused_until = NULL WHERE id = ?").run(exec.contact_id);
+      }
+    }
+
     let vars: Record<string, unknown> = {};
     try {
       vars = JSON.parse(exec.vars || "{}");
     } catch {}
-
-    const contact = getContact.get(exec.contact_id) as { phone?: string; name?: string } | undefined;
 
     while (true) {
       if (!exec.current_node_key) return complete(executionId, null);
@@ -347,9 +386,44 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
         case "react_message":
         case "block_contact":
         case "unblock_contact":
-        case "upsert_contact":
         case "add_group_participant":
         case "remove_group_participant": {
+          const next = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
+          if (!next) return complete(executionId, exec.current_node_key);
+          exec.current_node_key = next.target_key;
+          break;
+        }
+        case "upsert_contact": {
+          const config = (JSON.parse(node.config || "{}") ?? {}) as { name?: string; phone?: string; attributes?: Record<string, string>; tags?: string[] };
+          if (config.name) {
+            db.prepare("UPDATE contacts SET name = ? WHERE id = ?").run(config.name, exec.contact_id);
+          }
+          if (config.attributes) {
+            for (const [k, v] of Object.entries(config.attributes)) {
+              db.prepare(`
+                INSERT INTO contact_attributes (contact_id, key, value) VALUES (?, ?, ?)
+                ON CONFLICT(contact_id, key) DO UPDATE SET value = excluded.value, updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+              `).run(exec.contact_id, k, v);
+            }
+          }
+          if (config.tags && Array.isArray(config.tags)) {
+            for (const t of config.tags) {
+              db.prepare("INSERT OR IGNORE INTO contact_tags (contact_id, tag) VALUES (?, ?)").run(exec.contact_id, t);
+            }
+          }
+          const next = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
+          if (!next) return complete(executionId, exec.current_node_key);
+          exec.current_node_key = next.target_key;
+          break;
+        }
+        case "milestone": {
+          const config = (JSON.parse(node.config || "{}") ?? {}) as MilestoneNodeConfig;
+          if (config.milestoneKey) {
+            db.prepare(`
+              INSERT INTO funnel_conversions (execution_id, workflow_id, contact_id, milestone_key, value)
+              VALUES (?, ?, ?, ?, ?)
+            `).run(executionId, exec.workflow_id, exec.contact_id, config.milestoneKey, config.value ?? 1);
+          }
           const next = getNextKey.get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
           if (!next) return complete(executionId, exec.current_node_key);
           exec.current_node_key = next.target_key;
@@ -491,13 +565,26 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
           vars = JSON.parse(suspended.vars || "{}");
         } catch {}
 
+        // Cancel pending silence followup upon organic reply
+        db.prepare(`
+          UPDATE workflow_executions
+          SET silence_followup_at = NULL,
+              silence_sweep_executed = 0
+          WHERE id = ?
+        `).run(suspended.id);
+
         if (node.type === "collect_input") {
           const config = JSON.parse(node.config || "{}") as CollectInputNodeConfig;
           if (config.varKey) {
             vars[config.varKey] = rawInbound;
             updateExecutionVars.run(JSON.stringify(vars), suspended.id);
+            db.prepare(`
+              INSERT INTO contact_attributes (contact_id, key, value)
+              VALUES (?, ?, ?)
+              ON CONFLICT(contact_id, key) DO UPDATE SET value = excluded.value, updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            `).run(contactId, config.varKey, rawInbound);
           }
-          advanceFrom(suspended.id, suspended.current_node_key);
+          advanceFrom(suspended.id, suspended.current_node_key, "on_reply");
           return suspended.id;
         }
 
@@ -683,8 +770,8 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
       const payload = JSON.parse(job.payload) as { kind: "text" | "media"; text?: string; mediaId?: number };
       const exec = getExecution.get(job.execution_id) as { session_id: number; contact_id: number } | undefined;
       if (!exec) return;
-      const contact = getContact.get(exec.contact_id) as { phone: string; name?: string } | undefined;
-      if (!contact) return;
+      const contact = getContactWithAttributes(exec.contact_id);
+      if (!contact || !contact.phone) return;
 
       const result = await deps.sendMessage({
         sessionId: exec.session_id,
@@ -739,9 +826,60 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
       void step(executionId);
       return executionId;
     },
+    advanceFrom,
+    runSilenceSweep(targetClock: Clock = clock) {
+      return runSilenceSweepInternal(db, { advanceFrom }, targetClock);
+    },
   };
 
   const scheduler = createScheduler(db, engine.executeJob, clock);
 
   return { ...engine, handleIncomingMessage, scheduler, step };
+}
+
+export async function runSilenceSweepInternal(
+  db: BetterSqlite3.Database,
+  engine: { advanceFrom: (executionId: number, nodeKey: string, handle?: string) => void },
+  clock: Clock = realClock,
+): Promise<{ scanned: number; nudged: number }> {
+  const nowIso = new Date(clock.now()).toISOString();
+  const dueExecutions = db.prepare(`
+    SELECT we.id, we.workflow_id, we.current_node_key, we.contact_id
+    FROM workflow_executions we
+    WHERE we.status = 'waiting_input'
+      AND we.silence_followup_at IS NOT NULL
+      AND we.silence_followup_at <= ?
+      AND we.silence_sweep_executed = 0
+  `).all(nowIso) as Array<{ id: number; workflow_id: number; current_node_key: string; contact_id: number }>;
+
+  let nudged = 0;
+  for (const exec of dueExecutions) {
+    const contact = db.prepare("SELECT bot_status, bot_paused_until FROM contacts WHERE id = ?").get(exec.contact_id) as { bot_status: string; bot_paused_until: string | null } | undefined;
+    if (contact && contact.bot_status === "paused_human") continue;
+
+    const edge = db.prepare("SELECT target_key FROM workflow_edges WHERE workflow_id = ? AND source_key = ? AND handle = 'on_silence_2h'").get(exec.workflow_id, exec.current_node_key) as { target_key: string } | undefined;
+
+    if (edge) {
+      db.prepare(`
+        UPDATE workflow_executions
+        SET status = 'running',
+            current_node_key = ?,
+            silence_sweep_executed = 1,
+            silence_followup_at = NULL
+        WHERE id = ?
+      `).run(edge.target_key, exec.id);
+
+      db.prepare("INSERT INTO events (event_type, execution_id, data) VALUES ('silence_sweep.triggered', ?, ?)").run(
+        exec.id,
+        JSON.stringify({ from_node: exec.current_node_key, target_node: edge.target_key }),
+      );
+
+      engine.advanceFrom(exec.id, exec.current_node_key, "on_silence_2h");
+      nudged++;
+    } else {
+      db.prepare("UPDATE workflow_executions SET silence_sweep_executed = 1 WHERE id = ?").run(exec.id);
+    }
+  }
+
+  return { scanned: dueExecutions.length, nudged };
 }

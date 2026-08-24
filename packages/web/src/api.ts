@@ -205,4 +205,66 @@ export const api = {
         executionId?: number;
       }>(r),
     ),
+
+  // CRM & Customer 360
+  getContact: (id: number) =>
+    fetch(`/api/contacts/${id}`).then((r) =>
+      json<{
+        id: number;
+        phone: string;
+        name: string | null;
+        funnelPhase: string;
+        botStatus: string;
+        botPausedUntil: string | null;
+        attributes: Record<string, { value: string; updatedAt: string }>;
+        tags: string[];
+      }>(r),
+    ),
+  updateBotStatus: (id: number, status: "active" | "paused_human" | "opted_out", pauseHours = 24) =>
+    fetch(`/api/contacts/${id}/bot-status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status, pauseHours }),
+    }).then((r) => json<{ ok: boolean; botStatus: string; botPausedUntil: string | null }>(r)),
+  advancePhase: (id: number, workflowId?: number, notes?: string) =>
+    fetch(`/api/contacts/${id}/advance-phase`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workflowId, notes }),
+    }).then((r) => json<{ ok: boolean; funnelPhase: string }>(r)),
+  listNotes: (contactId: number) =>
+    fetch(`/api/contacts/${contactId}/notes`).then((r) =>
+      json<Array<{ id: number; contactId: number; author: string; body: string; createdAt: string }>>(r),
+    ),
+  createNote: (contactId: number, body: string, author = "operator") =>
+    fetch(`/api/contacts/${contactId}/notes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body, author }),
+    }).then((r) => json<{ ok: boolean; id: number }>(r)),
+  sendManualMessage: (contactId: number, text: string, sessionId?: number) =>
+    fetch(`/api/contacts/${contactId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, sessionId }),
+    }).then((r) =>
+      json<{ ok: boolean; messageId: number; botStatus: string; botPausedUntil: string }>(r),
+    ),
+  getFunnelStats: (experimentId: number) =>
+    fetch(`/api/experiments/${experimentId}/funnel`).then((r) =>
+      json<{
+        experimentId: number;
+        variants: Array<{
+          workflowId: number;
+          name: string;
+          totalExecutions: number;
+          totalSent: number;
+          totalDelivered: number;
+          totalRead: number;
+          organic2hReplies: number;
+          silenceReactivations: number;
+          qualifiedConversions: number;
+        }>;
+      }>(r),
+    ),
 };
