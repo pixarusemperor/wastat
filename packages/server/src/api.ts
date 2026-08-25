@@ -882,6 +882,12 @@ export function registerApiRoutes(
     },
   );
 
+  // Resume all contacts to active
+  app.post("/api/contacts/resume-all", async (request, reply) => {
+    db.prepare("UPDATE contacts SET bot_status = 'active', bot_paused_until = NULL WHERE bot_status = 'paused_human'").run();
+    return { ok: true, message: "All contacts resumed to active" };
+  });
+
   // 1-Click Advance to Phase 2
   app.post<{ Params: { id: string }; Body: { workflowId?: number; notes?: string } }>(
     "/api/contacts/:id/advance-phase",

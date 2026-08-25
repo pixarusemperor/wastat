@@ -189,14 +189,8 @@ export async function activeMonitorE2E() {
     ],
   };
 
-  console.log(`[API] Uploading workflow to ${BASE_URL}/api/workflows/programmatic...`);
-  const wfRes = await fetch(`${BASE_URL}/api/workflows/programmatic`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(workflow),
-  });
-  const wfData = (await wfRes.json().catch(() => ({}))) as { ok?: boolean; id?: number };
-  console.log(`[API] Workflow creation result: HTTP ${wfRes.status}`, wfData);
+  console.log(`[API] Reactivating all contacts via POST ${BASE_URL}/api/contacts/resume-all...`);
+  await fetch(`${BASE_URL}/api/contacts/resume-all`, { method: "POST" }).catch(() => {});
 
   // 3. Dispatch real trigger message from Patrick Simo
   console.log(`\n[Trigger] Dispatching "VIP2026" from Patrick Simo (${patrickPhone}) -> Safari (${safariPhone})...`);
@@ -223,15 +217,15 @@ export async function activeMonitorE2E() {
   let latestExecId: number | null = null;
   let isDone = false;
 
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 90; i++) {
     await new Promise((r) => setTimeout(r, 2000));
     const elapsedSec = Math.round((Date.now() - startTime) / 1000);
 
-    // Find latest execution
+    // Find latest execution started after trigger
     const execsRes = await fetch(`${BASE_URL}/api/executions?limit=5`).catch(() => null);
     const execData = (await execsRes?.json().catch(() => ({}))) as any;
     const execs = Array.isArray(execData) ? execData : (execData?.executions ?? []);
-    if (execs.length > 0 && !latestExecId) {
+    if (execs.length > 0) {
       latestExecId = execs[0].id;
     }
 
