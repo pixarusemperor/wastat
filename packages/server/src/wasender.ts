@@ -115,14 +115,21 @@ export function makeWasenderTransport(
       body: JSON.stringify(payload),
     });
 
-    if (!res.ok) throw { status: res.status, body: await res.text().catch(() => "") };
+    const resText = await res.text().catch(() => "");
+    let body: any = {};
+    try {
+      body = JSON.parse(resText);
+    } catch {
+      body = { raw: resText };
+    }
 
-    const body = (await res.json().catch(() => ({}))) as {
-      data?: { key?: { id?: string }; message_id?: string; id?: string };
-    };
+    if (!res.ok) {
+      throw { status: res.status, body, rawText: resText, payload };
+    }
+
     const providerMessageId =
-      body.data?.key?.id ?? body.data?.message_id ?? body.data?.id ?? `unconfirmed-${Date.now()}`;
-    return { providerMessageId };
+      body.data?.key?.id ?? body.data?.message_id ?? body.data?.msgId ?? body.data?.id ?? `unconfirmed-${Date.now()}`;
+    return { providerMessageId: String(providerMessageId), status: res.status, rawPayload: payload, rawResponse: body };
   };
 }
 

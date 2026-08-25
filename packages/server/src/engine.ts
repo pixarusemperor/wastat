@@ -28,7 +28,12 @@ export interface EngineDeps {
   clock?: Clock;
   /** PRD §13: random delays need a deterministic source in tests. */
   rng?: () => number;
-  sendMessage: (input: SendMessageInput) => Promise<{ providerMessageId: string }>;
+  sendMessage: (input: SendMessageInput) => Promise<{
+    providerMessageId: string;
+    status?: number;
+    rawPayload?: unknown;
+    rawResponse?: unknown;
+  }>;
   markMessageAsRead?: (input: {
     sessionId: number;
     toPhone: string;
@@ -875,6 +880,25 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
           mimeType?: string;
           filename?: string;
         };
+        const startTime = clock.now();
+        db.prepare(`
+          INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
+          VALUES ('api.outbound_dispatch', ?, ?, ?, ?)
+        `).run(
+          exec.session_id,
+          exec.contact_id,
+          job.execution_id,
+          JSON.stringify({
+            node_key: job.node_key,
+            kind: payload.kind,
+            to: contact.phone,
+            text: payload.text,
+            mediaUrl: payload.mediaUrl,
+            mimeType: payload.mimeType,
+            filename: payload.filename,
+          }),
+        );
+
         const result = await deps.sendMessage({
           sessionId: exec.session_id,
           toPhone: contact.phone,
@@ -885,6 +909,23 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
           mimeType: payload.mimeType,
           filename: payload.filename,
         });
+
+        const durationMs = clock.now() - startTime;
+        db.prepare(`
+          INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
+          VALUES ('api.outbound_response', ?, ?, ?, ?)
+        `).run(
+          exec.session_id,
+          exec.contact_id,
+          job.execution_id,
+          JSON.stringify({
+            node_key: job.node_key,
+            status: result.status ?? 200,
+            provider_message_id: result.providerMessageId,
+            duration_ms: durationMs,
+            raw_response: result.rawResponse ?? null,
+          }),
+        );
 
         insertMessage.run(
           exec.session_id,
@@ -927,6 +968,8 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
             job_type: job.type,
             node_key: job.node_key,
             error: errMsg,
+            details: err?.body ?? err?.response ?? err,
+            status: err?.status ?? 500,
             stack: errStack,
           }),
         );
