@@ -867,13 +867,23 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
           db.prepare("UPDATE messages SET status = 'read' WHERE id = ? AND status != 'read'").run(exec.trigger_message_id);
         }
 
-        const payload = JSON.parse(job.payload) as { kind: "text" | "media"; text?: string; mediaId?: number };
+        const payload = JSON.parse(job.payload) as {
+          kind: "text" | "media";
+          text?: string;
+          mediaId?: number;
+          mediaUrl?: string;
+          mimeType?: string;
+          filename?: string;
+        };
         const result = await deps.sendMessage({
           sessionId: exec.session_id,
           toPhone: contact.phone,
           kind: payload.kind,
           text: payload.text,
           mediaId: payload.mediaId,
+          mediaUrl: payload.mediaUrl,
+          mimeType: payload.mimeType,
+          filename: payload.filename,
         });
 
         insertMessage.run(
