@@ -186,16 +186,18 @@ export function registerApiRoutes(
       return;
     }
     // sqlite path: same work inside the sync transaction (existing behavior).
-    db.transaction((workflowId: number, graph: ParsedGraph) => {
-      db.prepare("DELETE FROM workflow_nodes WHERE workflow_id = ?").run(workflowId);
-      db.prepare("DELETE FROM workflow_edges WHERE workflow_id = ?").run(workflowId);
+    const sqlite = db;
+    if (!sqlite) throw new Error("registerApiRoutes requires a sqlite-capable database handle");
+    sqlite.transaction((workflowId: number, graph: ParsedGraph) => {
+      sqlite.prepare("DELETE FROM workflow_nodes WHERE workflow_id = ?").run(workflowId);
+      sqlite.prepare("DELETE FROM workflow_edges WHERE workflow_id = ?").run(workflowId);
       for (const n of graph.nodes) {
-        db.prepare(
+        sqlite.prepare(
           "INSERT INTO workflow_nodes (workflow_id, node_key, type, config, position_x, position_y) VALUES (?, ?, ?, ?, ?, ?)",
         ).run(workflowId, n.nodeKey, n.type, configToDb(n.config), n.positionX, n.positionY);
       }
       for (const e of graph.edges) {
-        db.prepare(
+        sqlite.prepare(
           "INSERT INTO workflow_edges (workflow_id, source_key, target_key, handle) VALUES (?, ?, ?, ?)",
         ).run(workflowId, e.sourceKey, e.targetKey, e.handle ?? null);
       }
