@@ -229,7 +229,8 @@ export async function activeMonitorE2E() {
 
     // Find latest execution
     const execsRes = await fetch(`${BASE_URL}/api/executions?limit=5`).catch(() => null);
-    const execs = (await execsRes?.json().catch(() => [])) as Array<{ id: number; status: string; currentNodeKey: string }>;
+    const execData = (await execsRes?.json().catch(() => ({}))) as any;
+    const execs = Array.isArray(execData) ? execData : (execData?.executions ?? []);
     if (execs.length > 0 && !latestExecId) {
       latestExecId = execs[0].id;
     }

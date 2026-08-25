@@ -177,10 +177,23 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
         (!isGroup && key.remoteJid.includes("@") ? key.remoteJid.split("@")[0] : key.remoteJid);
       const pushName = body.data?.messages?.pushName || body.data?.pushName || null;
 
-      // Handle Human Takeover: If fromMe is true, manual outbound was sent by human
+      // Handle Human Takeover: If fromMe is true, only activate takeover if message was NOT sent by WaStat bot
       if (key.fromMe) {
         upsertContact.run(phone, pushName);
         const contact = getContact.get(phone) as { id: number } | undefined;
+
+        // Dedup / Echo check: If this provider_message_id is already in messages or events, it is our own automated dispatch!
+        const isBotEcho = key.id
+          ? Boolean(
+              db.prepare("SELECT id FROM messages WHERE provider_message_id = ?").get(key.id) ||
+              db.prepare("SELECT id FROM events WHERE event_type IN ('api.outbound_dispatch', 'api.outbound_response', 'message.sent') AND data LIKE ?").get(`%${key.id}%`)
+            )
+          : false;
+
+        if (isBotEcho) {
+          return { ignored: "fromMe_bot_echo" };
+        }
+
         if (contact) {
           const pausedUntil = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
           db.prepare(`
@@ -193,7 +206,7 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
           db.prepare(`
             INSERT INTO events (event_type, session_id, contact_id, data)
             VALUES ('human_takeover.activated', ?, ?, ?)
-          `).run(session.id, contact.id, JSON.stringify({ paused_until: pausedUntil }));
+          `).run(session.id, contact.id, JSON.stringify({ paused_until: pausedUntil, provider_message_id: key.id }));
         }
         return { ignored: "fromMe_takeover_activated" };
       }
