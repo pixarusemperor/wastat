@@ -115,12 +115,17 @@ export function makeWasenderTransport(
       body: JSON.stringify(payload),
     });
 
-    const resText = await res.text().catch(() => "");
+    let resText = "";
     let body: any = {};
-    try {
-      body = JSON.parse(resText);
-    } catch {
-      body = { raw: resText };
+    if (typeof res.text === "function") {
+      resText = await res.text().catch(() => "");
+      try {
+        body = JSON.parse(resText);
+      } catch {
+        body = { raw: resText };
+      }
+    } else if (typeof res.json === "function") {
+      body = await res.json().catch(() => ({}));
     }
 
     if (!res.ok) {
