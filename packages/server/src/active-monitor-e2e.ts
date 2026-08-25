@@ -53,10 +53,9 @@ export async function activeMonitorE2E() {
 
   // 2. Build R2 media-backed workflow
   // R2 public bucket endpoints for media
-  const r2PublicBase = process.env.R2_PUBLIC_URL || "https://pub-8c9e5e786b0340b080518d6e9d6d531a.r2.dev";
-  const imageUrl = "https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=1200&q=80";
-  const audioUrl = "https://actions.google.com/sounds/v1/water/waves_crashing_on_rocks.ogg";
-  const videoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
+  const imageUrl = "https://pub-6f72df8c13ae4e02ab8b2c6671367a41.r2.dev/safari-luxury-villa.png";
+  const audioUrl = "https://pub-6f72df8c13ae4e02ab8b2c6671367a41.r2.dev/safari-welcome-audio.ogg";
+  const videoUrl = "https://pub-6f72df8c13ae4e02ab8b2c6671367a41.r2.dev/safari-luxury-tour.mp4";
 
   const workflow = {
     name: "Safari VIP Luxury Concierge",
@@ -189,8 +188,12 @@ export async function activeMonitorE2E() {
     ],
   };
 
-  console.log(`[API] Reactivating all contacts via POST ${BASE_URL}/api/contacts/resume-all...`);
-  await fetch(`${BASE_URL}/api/contacts/resume-all`, { method: "POST" }).catch(() => {});
+  console.log(`[API] Reactivating contact 1 to active via POST ${BASE_URL}/api/contacts/1/bot-status...`);
+  await fetch(`${BASE_URL}/api/contacts/1/bot-status`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "active" }),
+  }).catch(() => {});
 
   // 3. Dispatch real trigger message from Patrick Simo
   console.log(`\n[Trigger] Dispatching "VIP2026" from Patrick Simo (${patrickPhone}) -> Safari (${safariPhone})...`);

@@ -72,6 +72,7 @@ export function makeWasenderTransport(
       let publicUrl = input.mediaUrl;
       let mime = input.mimeType?.toLowerCase();
       let fileName = input.filename;
+      const mediaType = input.mediaType;
 
       if (input.mediaId && db) {
         const asset = db
@@ -86,17 +87,38 @@ export function makeWasenderTransport(
       }
 
       if (publicUrl) {
-        if (mime?.startsWith("image/") || publicUrl.match(/\.(jpg|jpeg|png|webp|gif)/i)) {
+        // Strip query strings and fragment identifiers for accurate extension detection
+        const cleanUrl = publicUrl.split("?")[0].split("#")[0];
+
+        const isExplicitImage = mediaType === "image";
+        const isExplicitAudio = mediaType === "audio";
+        const isExplicitVideo = mediaType === "video";
+        const isExplicitDocument = mediaType === "document";
+
+        const isImage =
+          isExplicitImage ||
+          (!mediaType &&
+            (mime?.startsWith("image/") || Boolean(cleanUrl.match(/\.(jpg|jpeg|png|webp|gif|svg|bmp|ico)$/i))));
+        const isAudio =
+          isExplicitAudio ||
+          (!mediaType &&
+            (mime?.startsWith("audio/") || Boolean(cleanUrl.match(/\.(mp3|ogg|wav|m4a|aac|opus|flac)$/i))));
+        const isVideo =
+          isExplicitVideo ||
+          (!mediaType &&
+            (mime?.startsWith("video/") || Boolean(cleanUrl.match(/\.(mp4|mov|webm|mkv|avi)$/i))));
+
+        if (isImage) {
           payload.imageUrl = publicUrl;
           if (input.text) payload.text = input.text;
-        } else if (mime?.startsWith("audio/") || publicUrl.match(/\.(mp3|ogg|wav|m4a)/i)) {
+        } else if (isAudio) {
           payload.audioUrl = publicUrl;
-        } else if (mime?.startsWith("video/") || publicUrl.match(/\.(mp4|mov|webm)/i)) {
+        } else if (isVideo) {
           payload.videoUrl = publicUrl;
           if (input.text) payload.text = input.text;
         } else {
           payload.documentUrl = publicUrl;
-          payload.fileName = fileName || "attachment.pdf";
+          payload.fileName = fileName || (isExplicitDocument ? "document.pdf" : "attachment.pdf");
           if (input.text) payload.text = input.text;
         }
       } else {

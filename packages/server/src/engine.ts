@@ -18,6 +18,7 @@ export interface SendMessageInput {
   toPhone: string;
   kind: "text" | "media";
   text?: string;
+  mediaType?: "image" | "audio" | "video" | "document";
   mediaId?: number;
   mediaUrl?: string;
   mimeType?: string;
@@ -305,20 +306,24 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
             const config = JSON.parse(node.config || "{}") as {
               text?: string;
               caption?: string;
+              mediaType?: "image" | "audio" | "video" | "document";
               mediaId?: number;
               mediaUrl?: string;
+              url?: string;
               mimeType?: string;
               filename?: string;
+              fileName?: string;
             };
             const rawCaption = config.caption ?? config.text;
             const caption = rawCaption ? interpolateVariables(rawCaption, vars, contact, session, triggerMsg, rng) : undefined;
             enqueueSend(executionId, exec.current_node_key, {
               kind: "media",
               text: caption,
+              mediaType: config.mediaType,
               mediaId: config.mediaId,
-              mediaUrl: config.mediaUrl,
+              mediaUrl: config.mediaUrl ?? config.url,
               mimeType: config.mimeType,
-              filename: config.filename,
+              filename: config.filename ?? config.fileName,
             });
             setWaiting(executionId, exec.current_node_key);
             return;
@@ -500,6 +505,7 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
     partial: {
       kind: "text" | "media";
       text?: string;
+      mediaType?: "image" | "audio" | "video" | "document";
       mediaId?: number;
       mediaUrl?: string;
       mimeType?: string;
@@ -875,6 +881,7 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
         const payload = JSON.parse(job.payload) as {
           kind: "text" | "media";
           text?: string;
+          mediaType?: "image" | "audio" | "video" | "document";
           mediaId?: number;
           mediaUrl?: string;
           mimeType?: string;
@@ -893,6 +900,7 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
             kind: payload.kind,
             to: contact.phone,
             text: payload.text,
+            mediaType: payload.mediaType,
             mediaUrl: payload.mediaUrl,
             mimeType: payload.mimeType,
             filename: payload.filename,
@@ -904,6 +912,7 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
           toPhone: contact.phone,
           kind: payload.kind,
           text: payload.text,
+          mediaType: payload.mediaType,
           mediaId: payload.mediaId,
           mediaUrl: payload.mediaUrl,
           mimeType: payload.mimeType,
