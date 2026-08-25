@@ -162,7 +162,10 @@ export function registerApiRoutes(
     if (isPg) {
       // postgres.js transaction: rewrite nodes + edges atomically.
       await dbClient.sql!.begin(async (tx) => {
-        const txClient = { ...dbClient, sql: tx } as DbClient;
+        // postgres.js begin() yields a tx-scoped client; present it to the
+        // query helpers as a DbClient (cast via unknown — TransactionSql is
+        // not statically assignable to Sql).
+        const txClient = { ...dbClient, sql: tx } as unknown as DbClient;
         await queryRun(txClient, "DELETE FROM workflow_nodes WHERE workflow_id = ?", [workflowId]);
         await queryRun(txClient, "DELETE FROM workflow_edges WHERE workflow_id = ?", [workflowId]);
         for (const n of graph.nodes) {
