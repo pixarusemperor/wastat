@@ -17,13 +17,17 @@ function pgMockDbClient(
   unsafeImpl: (text: string, params: unknown[]) => unknown[],
 ) {
   const calls: string[] = [];
-  const mockSql = {
+  type MockSql = {
+    unsafe: (text: string, params?: unknown[]) => Promise<unknown[]>;
+    begin: (fn: (tx: { unsafe: MockSql["unsafe"] }) => Promise<void>) => Promise<void>;
+  };
+  const mockSql: MockSql = {
     unsafe: async (text: string, params: unknown[] = []) => {
       calls.push(text);
       return unsafeImpl(text, params);
     },
     // postgres.js transactions: begin(fn) calls fn with a tx-scoped client.
-    begin: async (fn: (tx: { unsafe: typeof mockSql.unsafe }) => Promise<void>) => {
+    begin: async (fn: (tx: { unsafe: MockSql["unsafe"] }) => Promise<void>) => {
       await fn({ unsafe: mockSql.unsafe });
     },
   };
