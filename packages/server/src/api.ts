@@ -129,34 +129,82 @@ export function registerApiRoutes(
   void app.register(broadcastRoutes);
   void app.register(mcpRoutes);
 
-  const insertWorkflow = db.prepare(
-    "INSERT INTO workflows (name, description, active, session_id, experiment_id) VALUES (?, ?, ?, ?, ?)",
-  );
-  const insertNode = db.prepare(
-    "INSERT INTO workflow_nodes (workflow_id, node_key, type, config, position_x, position_y) VALUES (?, ?, ?, ?, ?, ?)",
-  );
-  const insertEdge = db.prepare(
-    "INSERT INTO workflow_edges (workflow_id, source_key, target_key, handle) VALUES (?, ?, ?, ?)",
-  );
+  // Ported helpers: the workflow slice reads/writes the active provider.
+  // JSONB vs TEXT config: pg (postgres.js) serializes objects and returns
+  // them pre-parsed; sqlite stores a JSON string. `active` is BOOLEAN on pg
+  // but 0/1 INTEGER on sqlite — normalize reads to 0/1 so the API contract
+  // (and the web client) stays identical across providers. BIGSERIAL ids
+  // come back as strings from postgres.js — coerce to numbers.
+  const isPg = Boolean(dbClient.sql);
 
-  const saveGraph = db.transaction((workflowId: number, graph: ParsedGraph) => {
-    db.prepare("DELETE FROM workflow_nodes WHERE workflow_id = ?").run(workflowId);
-    db.prepare("DELETE FROM workflow_edges WHERE workflow_id = ?").run(workflowId);
-    for (const n of graph.nodes) {
-      insertNode.run(workflowId, n.nodeKey, n.type, JSON.stringify(n.config), n.positionX, n.positionY);
+  const configToDb = (config: unknown) => (isPg ? config : JSON.stringify(config));
+  const configFromDb = (config: unknown) =>
+    typeof config === "string" ? JSON.parse(config) : (config as unknown);
+  const activeToDb = (active: number) => (isPg ? active === 1 : active);
+  const activeFromDb = (active: unknown) => (active ? 1 : 0);
+
+  async function insertWorkflowRow(g: {
+    name: string;
+    description: string | null;
+    active: number;
+    sessionId: number | null;
+    experimentId: number | null;
+  }): Promise<number> {
+    const info = await queryRun(
+      dbClient,
+      "INSERT INTO workflows (name, description, active, session_id, experiment_id) VALUES (?, ?, ?, ?, ?)",
+      [g.name, g.description, activeToDb(g.active), g.sessionId, g.experimentId],
+    );
+    return Number(info.lastInsertRowid);
+  }
+
+  async function saveGraph(workflowId: number, graph: ParsedGraph) {
+    if (isPg) {
+      // postgres.js transaction: rewrite nodes + edges atomically.
+      await dbClient.sql!.begin(async (tx) => {
+        const txClient = { ...dbClient, sql: tx } as DbClient;
+        await queryRun(txClient, "DELETE FROM workflow_nodes WHERE workflow_id = ?", [workflowId]);
+        await queryRun(txClient, "DELETE FROM workflow_edges WHERE workflow_id = ?", [workflowId]);
+        for (const n of graph.nodes) {
+          await queryRun(
+            txClient,
+            "INSERT INTO workflow_nodes (workflow_id, node_key, type, config, position_x, position_y) VALUES (?, ?, ?, ?, ?, ?)",
+            [workflowId, n.nodeKey, n.type, configToDb(n.config), n.positionX, n.positionY],
+          );
+        }
+        for (const e of graph.edges) {
+          await queryRun(
+            txClient,
+            "INSERT INTO workflow_edges (workflow_id, source_key, target_key, handle) VALUES (?, ?, ?, ?)",
+            [workflowId, e.sourceKey, e.targetKey, e.handle ?? null],
+          );
+        }
+      });
+      return;
     }
-    for (const e of graph.edges) {
-      insertEdge.run(workflowId, e.sourceKey, e.targetKey, e.handle ?? null);
-    }
-  });
+    // sqlite path: same work inside the sync transaction (existing behavior).
+    db.transaction((workflowId: number, graph: ParsedGraph) => {
+      db.prepare("DELETE FROM workflow_nodes WHERE workflow_id = ?").run(workflowId);
+      db.prepare("DELETE FROM workflow_edges WHERE workflow_id = ?").run(workflowId);
+      for (const n of graph.nodes) {
+        db.prepare(
+          "INSERT INTO workflow_nodes (workflow_id, node_key, type, config, position_x, position_y) VALUES (?, ?, ?, ?, ?, ?)",
+        ).run(workflowId, n.nodeKey, n.type, configToDb(n.config), n.positionX, n.positionY);
+      }
+      for (const e of graph.edges) {
+        db.prepare(
+          "INSERT INTO workflow_edges (workflow_id, source_key, target_key, handle) VALUES (?, ?, ?, ?)",
+        ).run(workflowId, e.sourceKey, e.targetKey, e.handle ?? null);
+      }
+    })(workflowId, graph);
+  }
 
   app.post("/api/workflows", async (request, reply) => {
     const parsed = parseGraph(request.body);
     if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
     const g = parsed.graph;
-    const info = insertWorkflow.run(g.name, g.description, g.active, g.sessionId, g.experimentId);
-    const workflowId = Number(info.lastInsertRowid);
-    saveGraph(workflowId, g);
+    const workflowId = await insertWorkflowRow(g);
+    await saveGraph(workflowId, g);
     return reply.code(201).send({ id: workflowId });
   });
 
@@ -225,21 +273,26 @@ export function registerApiRoutes(
     }
 
     let workflowId: number;
-    const existing = db.prepare("SELECT id FROM workflows WHERE name = ?").get(g.name) as { id: number } | undefined;
+    const existing = (await queryGet(dbClient, "SELECT id FROM workflows WHERE name = ?", [g.name])) as
+      | { id: number }
+      | undefined;
 
     if (existing) {
-      workflowId = existing.id;
-      db.prepare(`
+      workflowId = Number(existing.id);
+      await queryRun(
+        dbClient,
+        `
         UPDATE workflows 
-        SET description = ?, active = ?, session_id = ?, experiment_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        SET description = ?, active = ?, session_id = ?, experiment_id = ?${isPg ? ", updated_at = now()" : ", updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')"}
         WHERE id = ?
-      `).run(g.description, g.active, g.sessionId, g.experimentId, workflowId);
+      `,
+        [g.description, activeToDb(g.active), g.sessionId, g.experimentId, workflowId],
+      );
     } else {
-      const info = insertWorkflow.run(g.name, g.description, g.active, g.sessionId, g.experimentId);
-      workflowId = Number(info.lastInsertRowid);
+      workflowId = await insertWorkflowRow(g);
     }
 
-    saveGraph(workflowId, g);
+    await saveGraph(workflowId, g);
 
     return reply.code(existing ? 200 : 201).send({
       ok: true,
@@ -307,35 +360,49 @@ export function registerApiRoutes(
   });
 
   app.get("/api/workflows", async () => {
-    return db
-      .prepare(`
-        SELECT w.id, w.name, w.description, w.active, w.session_id AS sessionId, s.name AS sessionName,
-               w.experiment_id AS experimentId, w.created_at AS createdAt, w.updated_at AS updatedAt
+    const rows = await queryAll(
+      dbClient,
+      `
+        SELECT w.id, w.name, w.description, w.active, w.session_id AS "sessionId", s.name AS "sessionName",
+               w.experiment_id AS "experimentId", w.created_at AS "createdAt", w.updated_at AS "updatedAt"
         FROM workflows w
         LEFT JOIN sessions s ON s.id = w.session_id
         ORDER BY w.id DESC
-      `)
-      .all();
+      `,
+    );
+    return rows.map((r: any) => ({
+      ...r,
+      id: Number(r.id),
+      active: activeFromDb(r.active),
+      sessionId: r.sessionId != null ? Number(r.sessionId) : null,
+      experimentId: r.experimentId != null ? Number(r.experimentId) : null,
+    }));
   });
 
   app.get<{ Params: { id: string } }>("/api/workflows/:id", async (request, reply) => {
-    const wf = db
-      .prepare(`
-        SELECT w.id, w.name, w.description, w.active, w.session_id AS sessionId, s.name AS sessionName,
-               w.experiment_id AS experimentId, w.created_at AS createdAt, w.updated_at AS updatedAt
+    const wf = (await queryGet(
+      dbClient,
+      `
+        SELECT w.id, w.name, w.description, w.active, w.session_id AS "sessionId", s.name AS "sessionName",
+               w.experiment_id AS "experimentId", w.created_at AS "createdAt", w.updated_at AS "updatedAt"
         FROM workflows w
         LEFT JOIN sessions s ON s.id = w.session_id
         WHERE w.id = ?
-      `)
-      .get(request.params.id) as Record<string, unknown> | undefined;
+      `,
+      [request.params.id],
+    )) as Record<string, unknown> | undefined;
     if (!wf) return reply.code(404).send({ error: "not found" });
     const nodes = (
-      db.prepare("SELECT node_key, type, config, position_x, position_y FROM workflow_nodes WHERE workflow_id = ? ORDER BY id").all(request.params.id) as any[]
+      (await queryAll(
+        dbClient,
+        "SELECT node_key, type, config, position_x, position_y FROM workflow_nodes WHERE workflow_id = ? ORDER BY id",
+        [request.params.id],
+      )) as any[]
     ).map((n) => {
       const nodeObj: any = {
         nodeKey: n.node_key,
         type: n.type,
-        config: JSON.parse(n.config),
+        config: configFromDb(n.config),
       };
       if (n.position_x || n.position_y) {
         nodeObj.positionX = n.position_x;
@@ -344,7 +411,11 @@ export function registerApiRoutes(
       return nodeObj;
     });
     const edges = (
-      db.prepare("SELECT source_key, target_key, handle FROM workflow_edges WHERE workflow_id = ? ORDER BY id").all(request.params.id) as any[]
+      (await queryAll(
+        dbClient,
+        "SELECT source_key, target_key, handle FROM workflow_edges WHERE workflow_id = ? ORDER BY id",
+        [request.params.id],
+      )) as any[]
     ).map((e) => {
       const edgeObj: any = {
         sourceKey: e.source_key,
@@ -355,74 +426,80 @@ export function registerApiRoutes(
       }
       return edgeObj;
     });
-    return { ...wf, nodes, edges };
+    return { ...wf, id: Number(wf.id), active: activeFromDb(wf.active), nodes, edges };
   });
 
   app.put<{ Params: { id: string } }>("/api/workflows/:id", async (request, reply) => {
     const id = Number(request.params.id);
-    const exists = db.prepare("SELECT id FROM workflows WHERE id = ?").get(id);
+    const exists = await queryGet(dbClient, "SELECT id FROM workflows WHERE id = ?", [id]);
     if (!exists) return reply.code(404).send({ error: "not found" });
     const parsed = parseGraph(request.body);
     if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
     const g = parsed.graph;
-    db.prepare("UPDATE workflows SET name = ?, description = ?, active = ?, session_id = ?, experiment_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(
-      g.name,
-      g.description,
-      g.active,
-      g.sessionId,
-      g.experimentId,
-      id,
+    await queryRun(
+      dbClient,
+      `UPDATE workflows SET name = ?, description = ?, active = ?, session_id = ?, experiment_id = ?, updated_at = ${isPg ? "now()" : "strftime('%Y-%m-%dT%H:%M:%fZ','now')"} WHERE id = ?`,
+      [g.name, g.description, activeToDb(g.active), g.sessionId, g.experimentId, id],
     );
-    saveGraph(id, g);
+    await saveGraph(id, g);
     return { ok: true };
   });
 
   app.post<{ Params: { id: string } }>("/api/workflows/:id/duplicate", async (request, reply) => {
     const id = Number(request.params.id);
-    const sourceWf = db.prepare("SELECT * FROM workflows WHERE id = ?").get(id) as {
-      name: string;
-      description: string | null;
-      session_id: number | null;
-      experiment_id: number | null;
-    } | undefined;
+    const sourceWf = (await queryGet(dbClient, "SELECT * FROM workflows WHERE id = ?", [id])) as
+      | {
+          name: string;
+          description: string | null;
+          session_id: number | null;
+          experiment_id: number | null;
+        }
+      | undefined;
     if (!sourceWf) return reply.code(404).send({ error: "Source workflow not found" });
 
     const newName = `${sourceWf.name} (Copy)`;
-    const info = insertWorkflow.run(
-      newName,
-      sourceWf.description,
-      0, // new duplicates start as inactive/draft
-      sourceWf.session_id,
-      sourceWf.experiment_id,
-    );
-    const newWorkflowId = Number(info.lastInsertRowid);
+    const newWorkflowId = await insertWorkflowRow({
+      name: newName,
+      description: sourceWf.description,
+      active: 0, // new duplicates start as inactive/draft
+      sessionId: sourceWf.session_id != null ? Number(sourceWf.session_id) : null,
+      experimentId: sourceWf.experiment_id != null ? Number(sourceWf.experiment_id) : null,
+    });
 
-    const nodes = db.prepare("SELECT node_key, type, config, position_x, position_y FROM workflow_nodes WHERE workflow_id = ?").all(id) as Array<{
-      node_key: string;
-      type: string;
-      config: string;
-      position_x: number;
-      position_y: number;
-    }>;
+    const nodes = (await queryAll(
+      dbClient,
+      "SELECT node_key, type, config, position_x, position_y FROM workflow_nodes WHERE workflow_id = ?",
+      [id],
+    )) as Array<{ node_key: string; type: string; config: unknown; position_x: number; position_y: number }>;
     for (const n of nodes) {
-      insertNode.run(newWorkflowId, n.node_key, n.type, n.config, n.position_x, n.position_y);
+      await queryRun(
+        dbClient,
+        "INSERT INTO workflow_nodes (workflow_id, node_key, type, config, position_x, position_y) VALUES (?, ?, ?, ?, ?, ?)",
+        [newWorkflowId, n.node_key, n.type, configToDb(configFromDb(n.config)), n.position_x, n.position_y],
+      );
     }
 
-    const edges = db.prepare("SELECT source_key, target_key, handle FROM workflow_edges WHERE workflow_id = ?").all(id) as Array<{
-      source_key: string;
-      target_key: string;
-      handle: string | null;
-    }>;
+    const edges = (await queryAll(
+      dbClient,
+      "SELECT source_key, target_key, handle FROM workflow_edges WHERE workflow_id = ?",
+      [id],
+    )) as Array<{ source_key: string; target_key: string; handle: string | null }>;
     for (const e of edges) {
-      insertEdge.run(newWorkflowId, e.source_key, e.target_key, e.handle ?? null);
+      await queryRun(
+        dbClient,
+        "INSERT INTO workflow_edges (workflow_id, source_key, target_key, handle) VALUES (?, ?, ?, ?)",
+        [newWorkflowId, e.source_key, e.target_key, e.handle ?? null],
+      );
     }
 
     return reply.code(201).send({ id: newWorkflowId, name: newName });
   });
 
   app.delete<{ Params: { id: string } }>("/api/workflows/:id", async (request, reply) => {
-    const info = db.prepare("DELETE FROM workflows WHERE id = ?").run(request.params.id);
-    if (info.changes === 0) return reply.code(404).send({ error: "not found" });
+    const id = Number(request.params.id);
+    const row = await queryGet(dbClient, "SELECT id FROM workflows WHERE id = ?", [id]);
+    if (!row) return reply.code(404).send({ error: "not found" });
+    await queryRun(dbClient, "DELETE FROM workflows WHERE id = ?", [id]);
     return { ok: true };
   });
 

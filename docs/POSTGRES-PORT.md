@@ -37,8 +37,8 @@ keeps running on the SQLite fallback; ported slices read/write Postgres directly
 |---|-------|-------|--------|
 | 0 | Seam: DbClient through buildApp, query helpers, sqlite attach | `app.ts`, `index.ts`, `db/client.ts` | ✅ done |
 | 1 | Media assets | `media.ts` (`/api/media*`) | ✅ done + verified vs real Supabase/R2 |
-| 2 | Sessions + Wasender sync | `api.ts` sessions routes, `app.ts` webhook session bits, `wasender-admin.ts` upsert, `index.ts` getApiKey | ⬜ |
-| 3 | Workflows + nodes/edges | `api.ts` workflow CRUD (biggest api slice) | ⬜ |
+| 2 | Sessions + Wasender sync | `api.ts` sessions routes, `app.ts` webhook session bits, `wasender-admin.ts` upsert, `index.ts` getApiKey | ✅ done + verified vs real Supabase |
+| 3 | Workflows + nodes/edges | `api.ts` workflow CRUD (biggest api slice) | ✅ done + verified vs real Supabase |
 | 4 | Contacts + attributes/tags | `api.ts` contacts routes | ⬜ |
 | 5 | Messages + events + webhooks | `app.ts` webhook handlers, engine message inserts | ⬜ |
 | 6 | Executions + jobs | `engine.ts`, `scheduler.ts` (sync → async conversion) | ⬜ hardest |
@@ -65,6 +65,13 @@ slice 8 removes the sqlite crutch.
   Prefer delete-then-insert for idempotent migrations.
 - `workflows.session_id` was missing from `supabase-schema.sql` — now added (and
   applied live via `ALTER TABLE`).
+- Workflow slice provider quirks handled in `api.ts`: JSONB config is pre-parsed on
+  pg (string on sqlite) — normalized via `configFromDb`/`configToDb`; `strftime`
+  is sqlite-only so pg updates use `now()`; `active` BOOLEAN vs 0/1 INTEGER is
+  normalized to 0/1 in responses; BIGSERIAL ids come back as strings — coerced
+  with `Number()`. `saveGraph` runs inside `sql.begin()` on pg, sync transaction
+  on sqlite. The trigger route stays on the sqlite fallback (engine is sqlite-bound
+  until slice 6).
 - Supabase `media_assets` contains 4 pre-existing rows from earlier local tooling;
   they will appear in `/api/media` once the media slice deploys. Clean them up if
   unwanted.

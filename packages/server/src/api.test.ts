@@ -3,6 +3,39 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { buildApp } from "./app.js";
 import { FakeClock } from "./scheduler.js";
+import type { DbClient } from "./db/client.js";
+
+/**
+ * Wraps a real sqlite db in a DbClient whose `sql` side is a mock postgres.js
+ * client: captures every SQL text sent and answers from `unsafeImpl`. Routes
+ * ported to the seam must route their queries through `dbClient.sql` — if they
+ * fall back to `dbClient.sqlite`, the mock's `calls` stay empty and the test
+ * goes red.
+ */
+function pgMockDbClient(
+  db: Database.Database,
+  unsafeImpl: (text: string, params: unknown[]) => unknown[],
+) {
+  const calls: string[] = [];
+  const mockSql = {
+    unsafe: async (text: string, params: unknown[] = []) => {
+      calls.push(text);
+      return unsafeImpl(text, params);
+    },
+    // postgres.js transactions: begin(fn) calls fn with a tx-scoped client.
+    begin: async (fn: (tx: { unsafe: typeof mockSql.unsafe }) => Promise<void>) => {
+      await fn({ unsafe: mockSql.unsafe });
+    },
+  };
+  const dbClient = {
+    provider: "supabase_postgres",
+    sql: mockSql,
+    sqlite: db,
+    exec: async () => {},
+    close: async () => db.close(),
+  } as unknown as DbClient;
+  return { dbClient, calls };
+}
 
 const schema = readFileSync(new URL("./db/schema.sql", import.meta.url), "utf8");
 
@@ -434,5 +467,147 @@ describe("experiment funnel API", () => {
     const trigBody = trigRes.json();
     expect(trigBody.ok).toBe(true);
     expect(trigBody.executionId).toBeGreaterThan(0);
+  });
+});
+
+describe("workflows via the DbClient seam (provider-aware port)", () => {
+  it("POST /api/workflows writes the workflow and its graph into the active provider", async () => {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec(schema);
+    const writes: string[] = [];
+    const { dbClient } = pgMockDbClient(db, (text) => {
+      if (/INSERT INTO workflows/.test(text)) return [{ id: 42 }];
+      if (/INSERT INTO workflow_nodes/.test(text)) {
+        writes.push("nodes");
+        return [{ id: 1 }];
+      }
+      if (/INSERT INTO workflow_edges/.test(text)) {
+        writes.push("edges");
+        return [{ id: 1 }];
+      }
+      if (/DELETE FROM workflow_nodes/.test(text) || /DELETE FROM workflow_edges/.test(text)) return [];
+      return [];
+    });
+    const app = await buildApp(dbClient, {
+      clock: new FakeClock(),
+      sendMessage: async () => ({ providerMessageId: "mock" }),
+    });
+    const res = await app.inject({ method: "POST", url: "/api/workflows", payload: validGraph });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().id).toBe(42);
+    expect(writes).toContain("nodes");
+    expect(writes).toContain("edges");
+  });
+
+  it("GET /api/workflows/:id reads workflow, nodes, and edges from the active provider (config pre-parsed)", async () => {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec(schema);
+    const { dbClient } = pgMockDbClient(db, (text) => {
+      if (/WHERE w.id =/.test(text)) {
+        return [
+          {
+            id: 7,
+            name: "Provider Workflow",
+            description: null,
+            active: true,
+            sessionId: null,
+            sessionName: null,
+            experimentId: null,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        ];
+      }
+      if (/FROM workflow_nodes WHERE workflow_id =/.test(text)) {
+        return [
+          { node_key: "t", type: "trigger", config: { phrase: "hi" }, position_x: 10, position_y: 20 },
+          { node_key: "e", type: "end", config: {}, position_x: 0, position_y: 0 },
+        ];
+      }
+      if (/FROM workflow_edges WHERE workflow_id =/.test(text)) {
+        return [{ source_key: "t", target_key: "e", handle: null }];
+      }
+      return [];
+    });
+    const app = await buildApp(dbClient, {
+      clock: new FakeClock(),
+      sendMessage: async () => ({ providerMessageId: "mock" }),
+    });
+    const res = await app.inject({ method: "GET", url: "/api/workflows/7" });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.id).toBe(7);
+    expect(body.name).toBe("Provider Workflow");
+    expect(body.nodes).toHaveLength(2);
+    expect(body.nodes[0]).toEqual({ nodeKey: "t", type: "trigger", config: { phrase: "hi" }, positionX: 10, positionY: 20 });
+    expect(body.edges).toEqual([{ sourceKey: "t", targetKey: "e" }]);
+  });
+
+  it("POST /api/workflows/:id/duplicate reads source and writes copy through the active provider", async () => {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec(schema);
+    const writes: string[] = [];
+    const { dbClient } = pgMockDbClient(db, (text) => {
+      if (/SELECT \* FROM workflows WHERE id =/.test(text)) {
+        return [{ id: 5, name: "Original", description: "d", session_id: null, experiment_id: null }];
+      }
+      if (/INSERT INTO workflows/.test(text)) {
+        writes.push("workflow");
+        return [{ id: 99 }];
+      }
+      if (/FROM workflow_nodes WHERE workflow_id =/.test(text)) {
+        return [{ node_key: "t", type: "trigger", config: "{}", position_x: 0, position_y: 0 }];
+      }
+      if (/FROM workflow_edges WHERE workflow_id =/.test(text)) return [];
+      if (/INSERT INTO workflow_nodes/.test(text)) {
+        writes.push("nodes");
+        return [{ id: 1 }];
+      }
+      if (/INSERT INTO workflow_edges/.test(text)) {
+        writes.push("edges");
+        return [{ id: 1 }];
+      }
+      return [];
+    });
+    const app = await buildApp(dbClient, {
+      clock: new FakeClock(),
+      sendMessage: async () => ({ providerMessageId: "mock" }),
+    });
+    const res = await app.inject({ method: "POST", url: "/api/workflows/5/duplicate" });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().id).toBe(99);
+    expect(writes).toEqual(["workflow", "nodes"]);
+  });
+
+  it("PUT /api/workflows/:id updates via the provider; DELETE /api/workflows/:id removes via the provider", async () => {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec(schema);
+    const seen: string[] = [];
+    const { dbClient } = pgMockDbClient(db, (text) => {
+      seen.push(text);
+      if (/SELECT id FROM workflows WHERE id =/.test(text)) return [{ id: 3 }];
+      if (/UPDATE workflows SET/.test(text)) return [];
+      if (/DELETE FROM workflow_nodes/.test(text) || /DELETE FROM workflow_edges/.test(text)) return [];
+      if (/INSERT INTO workflow_nodes/.test(text)) return [{ id: 1 }];
+      if (/INSERT INTO workflow_edges/.test(text)) return [{ id: 1 }];
+      if (/DELETE FROM workflows WHERE id =/.test(text)) return [{ id: 3 }];
+      return [];
+    });
+    const app = await buildApp(dbClient, {
+      clock: new FakeClock(),
+      sendMessage: async () => ({ providerMessageId: "mock" }),
+    });
+
+    const put = await app.inject({ method: "PUT", url: "/api/workflows/3", payload: validGraph });
+    expect(put.statusCode).toBe(200);
+    expect(seen.some((t) => /UPDATE workflows SET/.test(t))).toBe(true);
+
+    const del = await app.inject({ method: "DELETE", url: "/api/workflows/3" });
+    expect(del.statusCode).toBe(200);
+    expect(seen.some((t) => /DELETE FROM workflows WHERE id =/.test(t))).toBe(true);
   });
 });
