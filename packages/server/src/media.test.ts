@@ -168,6 +168,77 @@ describe("Media Storage & Wasender Transport Pipeline", () => {
       fileName: "catalog.pdf",
     });
 
+    // Test explicit mediaType taking precedence even without extension/mime
+    await transport({
+      apiKey: "test-key",
+      sessionId: 1,
+      toPhone: "+1234567890",
+      kind: "media",
+      mediaType: "image",
+      mediaUrl: "https://example.com/render-image?id=99",
+      text: "Explicit image",
+    });
+    expect(sentPayloads[4]).toEqual({
+      to: "+1234567890",
+      text: "Explicit image",
+      imageUrl: "https://example.com/render-image?id=99",
+    });
+
+    await transport({
+      apiKey: "test-key",
+      sessionId: 1,
+      toPhone: "+1234567890",
+      kind: "media",
+      mediaType: "video",
+      mediaUrl: "https://example.com/render-video?id=100",
+      text: "Explicit video",
+    });
+    expect(sentPayloads[5]).toEqual({
+      to: "+1234567890",
+      text: "Explicit video",
+      videoUrl: "https://example.com/render-video?id=100",
+    });
+
+    await transport({
+      apiKey: "test-key",
+      sessionId: 1,
+      toPhone: "+1234567890",
+      kind: "media",
+      mediaType: "audio",
+      mediaUrl: "https://example.com/render-audio?id=101",
+    });
+    expect(sentPayloads[6]).toEqual({
+      to: "+1234567890",
+      audioUrl: "https://example.com/render-audio?id=101",
+    });
+
+    // Test query string stripping during extension matching
+    await transport({
+      apiKey: "test-key",
+      sessionId: 1,
+      toPhone: "+1234567890",
+      kind: "media",
+      mediaUrl: "https://r2.domain.com/photo.jpeg?X-Amz-Signature=abcd1234&expires=9999",
+      text: "Signed URL photo",
+    });
+    expect(sentPayloads[7]).toEqual({
+      to: "+1234567890",
+      text: "Signed URL photo",
+      imageUrl: "https://r2.domain.com/photo.jpeg?X-Amz-Signature=abcd1234&expires=9999",
+    });
+
+    await transport({
+      apiKey: "test-key",
+      sessionId: 1,
+      toPhone: "+1234567890",
+      kind: "media",
+      mediaUrl: "https://r2.domain.com/recording.mp3?token=secret#play",
+    });
+    expect(sentPayloads[8]).toEqual({
+      to: "+1234567890",
+      audioUrl: "https://r2.domain.com/recording.mp3?token=secret#play",
+    });
+
     rmSync(tempDir, { recursive: true, force: true });
   });
 });

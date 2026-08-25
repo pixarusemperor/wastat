@@ -188,6 +188,15 @@ export async function activeMonitorE2E() {
     ],
   };
 
+  console.log(`[API] Uploading verified R2 media workflow via POST ${BASE_URL}/api/workflows/programmatic...`);
+  const wfRes = await fetch(`${BASE_URL}/api/workflows/programmatic`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(workflow),
+  });
+  const wfData = (await wfRes.json().catch(() => ({}))) as any;
+  console.log(`[API] Workflow R2 update result: HTTP ${wfRes.status}`, wfData);
+
   console.log(`[API] Reactivating contact 1 to active via POST ${BASE_URL}/api/contacts/1/bot-status...`);
   await fetch(`${BASE_URL}/api/contacts/1/bot-status`, {
     method: "POST",

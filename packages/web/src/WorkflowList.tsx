@@ -11,6 +11,11 @@ export function WorkflowList({ onOpen }: { onOpen: (id: string) => void }) {
   const [deleting, setDeleting] = useState<WorkflowSummary | null>(null);
   const [duplicatingId, setDuplicatingId] = useState<number | null>(null);
 
+  useEffect(() => {
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function refresh() {
     setError(null);
     try {

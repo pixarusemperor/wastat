@@ -11,7 +11,7 @@ We analyzed WACRM (`https://github.com/ArnasDon/wacrm` / `wacrm.tech`) and its a
 This imposes architectural differences:
 1. **Interactive UI Restrictions**: Baileys / WhatsApp Web does not reliably render Meta interactive button payloads or list pickers to recipients.
 2. **Rate Limits & Anti-Ban**: Fast sequential message blasts trigger anti-spam heuristics. A 5-second per-session throttle and typing/recording presence emulation (`sendPresenceUpdate`) are required.
-3. **Execution State Suspension**: Multi-step workflows requiring user input (`collect_input`, `send_menu`) must suspend execution in SQLite (`waiting_input`) with variable context (`vars`), instead of relying on ephemeral webhooks.
+3. **Execution State Suspension**: Multi-step workflows requiring user input (`collect_input`, `send_menu`) must suspend execution in the persistent database (`waiting_input`) with variable context (`vars`), instead of relying on ephemeral webhooks. Production persistence is Supabase PostgreSQL (see ADR 0005); SQLite is a local-dev fallback.
 
 ## Decision
 
@@ -19,8 +19,8 @@ This imposes architectural differences:
    - `send_menu` compiles menu options into bold numbered WhatsApp messages (`*1.* Sales - _Inquiries_`) followed by instructions (`_Reply with the number of your choice._`).
    - Inbound replies (`"1"`, `"2"`, or option names) match option IDs, store `vars.selected_option`, and route to the corresponding edge handle.
 
-2. **Flow State Machine & SQLite Persistence**:
-   - Schema updated in `workflow_nodes` (`position_x`, `position_y`, unconstrained types), `workflow_edges` (`handle`), and `workflow_executions` (`vars`, `reprompt_count`, status `waiting_input`).
+2. **Flow State Machine & Database Persistence**:
+   - Schema updated in `workflow_nodes` (`position_x`, `position_y`, unconstrained types), `workflow_edges` (`handle`), and `workflow_executions` (`vars`, `reprompt_count`, status `waiting_input`). Persisted in Supabase PostgreSQL in production (ADR 0005), SQLite in local dev.
    - Execution resumes when an inbound message arrives for a suspended conversation before triggering new keyword matches.
 
 3. **Predicate Branching & Split Testing**:
@@ -35,6 +35,6 @@ This imposes architectural differences:
 
 ## Consequences
 
-- Workflows are fully deterministic and inspectable in SQLite.
+- Workflows are fully deterministic and inspectable in the database (Supabase PostgreSQL in production, SQLite in local dev).
 - Seamless compatibility with both WhatsApp mobile and web clients via WasenderAPI.
 - Complete test coverage via Vitest (53/53 tests pass) and Playwright E2E.

@@ -305,6 +305,50 @@ describe("engine", () => {
     });
   });
 
+  it("send_media nodes forward mediaType, mediaUrl, mimeType, filename, and caption to deps.sendMessage", async () => {
+    const { db, engine, sent } = setup();
+    const workflowId = seedWorkflow(
+      db,
+      [
+        { key: "t", type: "trigger" },
+        {
+          key: "m",
+          type: "send_media",
+          config: {
+            caption: "VIP Presentation for {{contact.name}}",
+            mediaType: "video",
+            mediaUrl: "https://r2.domain.com/video.mp4?sig=xyz",
+            mimeType: "video/mp4",
+            filename: "presentation.mp4",
+          },
+        },
+        { key: "e", type: "end" },
+      ],
+      [["t", "m"], ["m", "e"]],
+    );
+    const { sessionId, contactId } = seedContactSession(db);
+    db.prepare("UPDATE contacts SET name = 'Alice' WHERE id = ?").run(contactId);
+    const execId = engine.startExecution(workflowId, sessionId, contactId)!;
+
+    await engine.scheduler.tick();
+    expect(sent).toEqual([
+      {
+        sessionId,
+        toPhone: "+15550001",
+        kind: "media",
+        text: "VIP Presentation for Alice",
+        mediaType: "video",
+        mediaId: undefined,
+        mediaUrl: "https://r2.domain.com/video.mp4?sig=xyz",
+        mimeType: "video/mp4",
+        filename: "presentation.mp4",
+      },
+    ]);
+    expect(db.prepare("SELECT message_type FROM messages WHERE workflow_execution_id = ?").get(execId)).toEqual({
+      message_type: "media",
+    });
+  });
+
   describe("incoming-message routing (PRD §17)", () => {
     function keywordWorkflow(
       db: Database.Database,

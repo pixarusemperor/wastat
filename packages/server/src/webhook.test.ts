@@ -102,4 +102,77 @@ describe("wasender webhook", () => {
     ).toEqual({ n: 1 });
     expect(db.prepare("SELECT COUNT(*) AS n FROM workflow_executions").get()).toEqual({ n: 1 });
   });
+
+  it("handles webhook dispatches for Safari (105947) and Patrick Simo (112691)", async () => {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec(schema);
+    const sent: unknown[] = [];
+    const app = await buildApp(db, {
+      clock: new FakeClock(),
+      sendMessage: async (input) => {
+        sent.push(input);
+        return { providerMessageId: `prov-${sent.length}` };
+      },
+    });
+
+    // Seed Safari (105947) and Patrick Simo (112691) sessions
+    db.prepare("INSERT INTO sessions (name, provider_session_id) VALUES ('Safari', '105947')").run();
+    db.prepare("INSERT INTO sessions (name, provider_session_id) VALUES ('Patrick Simo', '112691')").run();
+
+    // 1. Dispatch webhook to Safari session (105947) from Patrick Simo phone
+    const safariRes = await app.inject({
+      method: "POST",
+      url: "/webhooks/wasender/105947",
+      payload: {
+        event: "messages.received",
+        timestamp: 1787659200,
+        data: {
+          messages: {
+            key: { id: "SAFARI_MSG_001", remoteJid: "15550199832@s.whatsapp.net", cleanedSenderPn: "+15550199832" },
+            pushName: "Patrick Simo",
+            messageBody: "Hello Safari VIP Concierge",
+          },
+        },
+      },
+    });
+
+    expect(safariRes.statusCode).toBe(200);
+    const safariMsg = db.prepare("SELECT * FROM messages WHERE provider_message_id = 'SAFARI_MSG_001'").get() as any;
+    expect(safariMsg).toMatchObject({
+      text: "Hello Safari VIP Concierge",
+      provider_message_id: "SAFARI_MSG_001",
+      direction: "in",
+    });
+    const patrickContact = db.prepare("SELECT * FROM contacts WHERE phone = '+15550199832'").get() as any;
+    expect(patrickContact).toMatchObject({
+      phone: "+15550199832",
+      name: "Patrick Simo",
+    });
+
+    // 2. Dispatch webhook to Patrick Simo session (112691) from Safari phone
+    const patrickRes = await app.inject({
+      method: "POST",
+      url: "/webhooks/wasender/112691",
+      payload: {
+        event: "messages.received",
+        timestamp: 1787659205,
+        data: {
+          messages: {
+            key: { id: "PATRICK_MSG_001", remoteJid: "15550199833@s.whatsapp.net", cleanedSenderPn: "+15550199833" },
+            pushName: "Safari Host",
+            messageBody: "Welcome to your luxury experience",
+          },
+        },
+      },
+    });
+
+    expect(patrickRes.statusCode).toBe(200);
+    const patrickMsg = db.prepare("SELECT * FROM messages WHERE provider_message_id = 'PATRICK_MSG_001'").get() as any;
+    expect(patrickMsg).toMatchObject({
+      text: "Welcome to your luxury experience",
+      provider_message_id: "PATRICK_MSG_001",
+      direction: "in",
+    });
+  });
 });
