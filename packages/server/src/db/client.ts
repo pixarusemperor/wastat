@@ -14,6 +14,21 @@ export interface DatabaseConfig {
 
 export type DbProviderType = "supabase_postgres" | "sqlite";
 
+/**
+ * Applies the SQLite schema to a database handle. Idempotent (schema.sql uses
+ * CREATE TABLE IF NOT EXISTS), so it is safe to run against an existing DB —
+ * e.g. the Supabase-mode runtime fallback in index.ts, where a fresh volume
+ * would otherwise have no tables and boot seeding would crash.
+ */
+export function applySqliteSchema(db: BetterSqlite3.Database): void {
+  try {
+    const schemaSql = readFileSync(new URL("./schema.sql", import.meta.url), "utf8");
+    db.exec(schemaSql);
+  } catch (err) {
+    console.warn("[DB] SQLite schema notice:", (err as Error)?.message || err);
+  }
+}
+
 export interface DbClient {
   provider: DbProviderType;
   sqlite?: BetterSqlite3.Database;
@@ -87,13 +102,7 @@ export async function createDatabaseClient(config?: DatabaseConfig): Promise<DbC
   const db = new Database(sqlitePath);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
-
-  try {
-    const schemaSql = readFileSync(new URL("./schema.sql", import.meta.url), "utf8");
-    db.exec(schemaSql);
-  } catch (err) {
-    console.warn("[DB] SQLite schema notice:", (err as Error)?.message || err);
-  }
+  applySqliteSchema(db);
 
   return {
     provider: "sqlite",

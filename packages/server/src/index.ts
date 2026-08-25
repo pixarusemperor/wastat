@@ -1,11 +1,25 @@
 import { buildApp } from "./app.js";
 import { makeWasenderTransport, markMessageAsRead, sendPresenceUpdate, openDb } from "./wasender.js";
-import { createDatabaseClient } from "./db/client.js";
+import { applySqliteSchema, createDatabaseClient } from "./db/client.js";
+import type BetterSqlite3 from "better-sqlite3";
 
 const dbClient = await createDatabaseClient();
 console.log(`[DB] Database initialized successfully using provider: ${dbClient.provider}`);
 
-const db = dbClient.sqlite ?? openDb(process.env.DB_PATH ?? "wastat.db");
+let db: BetterSqlite3.Database;
+if (dbClient.sqlite) {
+  db = dbClient.sqlite;
+} else {
+  // Supabase env is configured, but the app runtime (engine/api/media) is SQLite-native.
+  // Open the local SQLite store WITH schema applied so boot and all routes keep working
+  // until the app is fully ported to Postgres. Without this, a fresh volume has no schema
+  // and autoSeedProductionWorkflows crashes with "no such table: workflows".
+  db = openDb(process.env.DB_PATH ?? "wastat.db");
+  applySqliteSchema(db);
+  console.warn(
+    "[DB] Supabase provider configured, but the app runtime is SQLite-native — continuing on local SQLite.",
+  );
+}
 
 import { autoSeedProductionWorkflows } from "./seed-defaults.js";
 autoSeedProductionWorkflows(db);
