@@ -68,26 +68,35 @@ export function makeWasenderTransport(
   return async (input) => {
     let payload: Record<string, unknown> = { to: input.toPhone };
 
-    if (input.kind === "media" && input.mediaId && db) {
-      const asset = db
-        .prepare("SELECT filename, mime_type, r2_key FROM media_assets WHERE id = ?")
-        .get(input.mediaId) as { filename: string; mime_type: string; r2_key: string } | undefined;
+    if (input.kind === "media") {
+      let publicUrl = input.mediaUrl;
+      let mime = input.mimeType?.toLowerCase();
+      let fileName = input.filename;
 
-      if (asset) {
-        const publicUrl = storage.getPublicUrl(asset.r2_key);
-        const mime = asset.mime_type.toLowerCase();
+      if (input.mediaId && db) {
+        const asset = db
+          .prepare("SELECT filename, mime_type, r2_key FROM media_assets WHERE id = ?")
+          .get(input.mediaId) as { filename: string; mime_type: string; r2_key: string } | undefined;
 
-        if (mime.startsWith("image/")) {
+        if (asset) {
+          publicUrl = storage.getPublicUrl(asset.r2_key);
+          mime = asset.mime_type.toLowerCase();
+          fileName = asset.filename;
+        }
+      }
+
+      if (publicUrl) {
+        if (mime?.startsWith("image/") || publicUrl.match(/\.(jpg|jpeg|png|webp|gif)/i)) {
           payload.imageUrl = publicUrl;
           if (input.text) payload.text = input.text;
-        } else if (mime.startsWith("audio/")) {
+        } else if (mime?.startsWith("audio/") || publicUrl.match(/\.(mp3|ogg|wav|m4a)/i)) {
           payload.audioUrl = publicUrl;
-        } else if (mime.startsWith("video/")) {
+        } else if (mime?.startsWith("video/") || publicUrl.match(/\.(mp4|mov|webm)/i)) {
           payload.videoUrl = publicUrl;
           if (input.text) payload.text = input.text;
         } else {
           payload.documentUrl = publicUrl;
-          payload.fileName = asset.filename;
+          payload.fileName = fileName || "attachment.pdf";
           if (input.text) payload.text = input.text;
         }
       } else {

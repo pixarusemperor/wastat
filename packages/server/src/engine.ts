@@ -19,6 +19,9 @@ export interface SendMessageInput {
   kind: "text" | "media";
   text?: string;
   mediaId?: number;
+  mediaUrl?: string;
+  mimeType?: string;
+  filename?: string;
 }
 
 export interface EngineDeps {
@@ -294,13 +297,23 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
             return;
           }
           case "send_media": {
-            const config = JSON.parse(node.config || "{}") as { text?: string; caption?: string; mediaId?: number };
+            const config = JSON.parse(node.config || "{}") as {
+              text?: string;
+              caption?: string;
+              mediaId?: number;
+              mediaUrl?: string;
+              mimeType?: string;
+              filename?: string;
+            };
             const rawCaption = config.caption ?? config.text;
             const caption = rawCaption ? interpolateVariables(rawCaption, vars, contact, session, triggerMsg, rng) : undefined;
             enqueueSend(executionId, exec.current_node_key, {
               kind: "media",
               text: caption,
               mediaId: config.mediaId,
+              mediaUrl: config.mediaUrl,
+              mimeType: config.mimeType,
+              filename: config.filename,
             });
             setWaiting(executionId, exec.current_node_key);
             return;
@@ -479,7 +492,14 @@ export function createEngine(db: BetterSqlite3.Database, deps: EngineDeps) {
   function enqueueSend(
     executionId: number,
     nodeKey: string,
-    partial: { kind: "text" | "media"; text?: string; mediaId?: number },
+    partial: {
+      kind: "text" | "media";
+      text?: string;
+      mediaId?: number;
+      mediaUrl?: string;
+      mimeType?: string;
+      filename?: string;
+    },
   ) {
     scheduler.enqueue({
       type: "send_message",
