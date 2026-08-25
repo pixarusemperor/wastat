@@ -200,7 +200,21 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
 
       // PRD §52: duplicate deliveries are dropped here — the UNIQUE constraint
       // on provider_message_id is the dedup key.
-      const messageBody = body.data?.messages?.messageBody ?? body.data?.message?.conversation ?? body.data?.messageBody ?? null;
+      const m = Array.isArray(body.data?.messages) ? body.data?.messages[0] : (body.data?.messages || body.data?.message || body.data);
+      const messageBody =
+        m?.messageBody ??
+        m?.conversation ??
+        m?.extendedTextMessage?.text ??
+        m?.imageMessage?.caption ??
+        m?.videoMessage?.caption ??
+        m?.documentMessage?.caption ??
+        m?.buttonsResponseMessage?.selectedDisplayText ??
+        m?.listResponseMessage?.title ??
+        body.data?.messageBody ??
+        body.data?.text ??
+        body.data?.body ??
+        null;
+
       const ts = body.timestamp ? new Date(body.timestamp * 1000).toISOString() : new Date().toISOString();
 
       try {
