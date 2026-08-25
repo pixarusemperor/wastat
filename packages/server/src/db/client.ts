@@ -29,6 +29,61 @@ export function applySqliteSchema(db: BetterSqlite3.Database): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Provider-agnostic query helpers (used by ported modules)
+//
+// SQLite uses `?` placeholders and a synchronous API; postgres.js uses `$1..$n`
+// and is async. These helpers bridge the two so a module can run the same SQL
+// text against whichever provider is active: `db.sql` (Postgres) when present,
+// otherwise the `db.sqlite` fallback. Do not use `?` inside string literals in
+// queries passed here.
+// ---------------------------------------------------------------------------
+
+function toPgPlaceholders(sqlText: string): string {
+  let i = 0;
+  return sqlText.replace(/\?/g, () => `$${++i}`);
+}
+
+export async function queryAll(
+  db: DbClient,
+  sqlText: string,
+  params: unknown[] = [],
+): Promise<Record<string, unknown>[]> {
+  if (db.sql) {
+    // postgres.js parameter typing is narrower than our generic unknown[] — bridge it.
+    return (await db.sql.unsafe(toPgPlaceholders(sqlText), params as any[])) as Record<string, unknown>[];
+  }
+  if (!db.sqlite) throw new Error("queryAll: no database provider available");
+  return db.sqlite.prepare(sqlText).all(...params) as Record<string, unknown>[];
+}
+
+export async function queryGet(
+  db: DbClient,
+  sqlText: string,
+  params: unknown[] = [],
+): Promise<Record<string, unknown> | undefined> {
+  if (db.sql) {
+    const rows = await db.sql.unsafe(toPgPlaceholders(sqlText), params as any[]);
+    return rows[0] as Record<string, unknown> | undefined;
+  }
+  if (!db.sqlite) throw new Error("queryGet: no database provider available");
+  return db.sqlite.prepare(sqlText).get(...params) as Record<string, unknown> | undefined;
+}
+
+export async function queryRun(
+  db: DbClient,
+  sqlText: string,
+  params: unknown[] = [],
+): Promise<{ lastInsertRowid?: number }> {
+  if (db.sql) {
+    const rows = await db.sql.unsafe(`${toPgPlaceholders(sqlText)} RETURNING id`, params as any[]);
+    return { lastInsertRowid: rows.length ? Number(rows[0].id) : undefined };
+  }
+  if (!db.sqlite) throw new Error("queryRun: no database provider available");
+  const info = db.sqlite.prepare(sqlText).run(...params);
+  return { lastInsertRowid: Number(info.lastInsertRowid) };
+}
+
 export interface DbClient {
   provider: DbProviderType;
   sqlite?: BetterSqlite3.Database;

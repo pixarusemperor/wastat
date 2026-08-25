@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type BetterSqlite3 from "better-sqlite3";
 import { makeWasenderAdmin, upsertSession } from "./wasender-admin.js";
+import { queryAll, queryGet, queryRun, type DbClient } from "./db/client.js";
 import type { createEngine } from "./engine.js";
 import { validateWorkflowGraph } from "@wastat/shared";
 import { aiRoutes } from "./routes/ai.js";
@@ -116,9 +117,14 @@ function parseGraph(body: unknown): { error: string } | { graph: ParsedGraph } {
 
 export function registerApiRoutes(
   app: FastifyInstance,
-  db: BetterSqlite3.Database,
+  dbClient: DbClient,
   opts?: ApiRoutesOptions,
 ): void {
+  // Unported routes run against the sqlite side of the seam (index.ts guarantees
+  // a schema-applied handle in every mode); ported routes use dbClient directly.
+  const db = dbClient.sqlite;
+  if (!db) throw new Error("registerApiRoutes requires a sqlite-capable database handle");
+
   void app.register(aiRoutes);
   void app.register(broadcastRoutes);
   void app.register(mcpRoutes);
@@ -649,22 +655,20 @@ export function registerApiRoutes(
   // ---- Sessions management (Wasender account-level) ----
   if (opts?.wasenderPat) {
     const admin = makeWasenderAdmin(opts.wasenderPat, opts.fetchImpl);
-    const getLocal = db.prepare("SELECT id FROM sessions WHERE provider_session_id = ?");
 
-    /** List remote sessions and mirror them locally — the local table is the
-     * webhook-facing source of truth for api keys and secrets. Falls back to
-     * local cache if Wasender is unreachable or credentials are mock/expired. */
+    /** List remote sessions and mirror them into the active provider — the
+     * sessions table is the webhook-facing source of truth for api keys and
+     * secrets. Falls back to the local cache if Wasender is unreachable. */
     async function syncSessions(log?: FastifyInstance["log"]) {
       try {
-        for (const s of await admin.listSessions()) upsertSession(db, s);
+        for (const s of await admin.listSessions()) await upsertSession(dbClient, s);
       } catch (err) {
         log?.warn({ err }, "Could not sync remote Wasender sessions; serving local cache");
       }
-      return db
-        .prepare(
-          "SELECT id, name, provider_session_id AS providerSessionId, status FROM sessions ORDER BY id",
-        )
-        .all();
+      return queryAll(
+        dbClient,
+        'SELECT id, name, provider_session_id AS "providerSessionId", status FROM sessions ORDER BY id',
+      );
     }
 
     app.get("/api/sessions", async (request) => syncSessions(request.log));
@@ -677,8 +681,10 @@ export function registerApiRoutes(
         const base = process.env.PUBLIC_BASE_URL;
         const webhookUrl = base ? `${base.replace(/\/$/, "")}/webhooks/wasender/{id}` : undefined;
         const created = await admin.createSession(name, webhookUrl);
-        upsertSession(db, created);
-        const local = getLocal.get(String(created.id)) as { id: number } | undefined;
+        await upsertSession(dbClient, created);
+        const local = (await queryGet(dbClient, "SELECT id FROM sessions WHERE provider_session_id = ?", [
+          String(created.id),
+        ])) as { id: number } | undefined;
         return reply.code(201).send({
           id: local?.id ?? 0,
           providerSessionId: String(created.id),
@@ -693,13 +699,13 @@ export function registerApiRoutes(
 
     app.post<{ Params: { id: string } }>("/api/sessions/:id/connect", async (request, reply) => {
       const localId = Number(request.params.id);
-      const row = db
-        .prepare("SELECT id, provider_session_id FROM sessions WHERE id = ?")
-        .get(localId) as { id: number; provider_session_id: string } | undefined;
+      const row = (await queryGet(dbClient, "SELECT id, provider_session_id FROM sessions WHERE id = ?", [
+        localId,
+      ])) as { id: number; provider_session_id: string } | undefined;
       if (!row) return reply.code(404).send({ error: "not found" });
       try {
         await admin.connectSession(Number(row.provider_session_id));
-        db.prepare("UPDATE sessions SET status = 'connecting' WHERE id = ?").run(localId);
+        await queryRun(dbClient, "UPDATE sessions SET status = 'connecting' WHERE id = ?", [localId]);
         return { ok: true, status: "connecting" };
       } catch (err) {
         request.log.error(err);
@@ -709,9 +715,9 @@ export function registerApiRoutes(
 
     app.get<{ Params: { id: string } }>("/api/sessions/:id/qrcode", async (request, reply) => {
       const localId = Number(request.params.id);
-      const row = db
-        .prepare("SELECT id, provider_session_id FROM sessions WHERE id = ?")
-        .get(localId) as { id: number; provider_session_id: string } | undefined;
+      const row = (await queryGet(dbClient, "SELECT id, provider_session_id FROM sessions WHERE id = ?", [
+        localId,
+      ])) as { id: number; provider_session_id: string } | undefined;
       if (!row) return reply.code(404).send({ error: "not found" });
       try {
         const qrCode = await admin.getQrCode(Number(row.provider_session_id));
@@ -724,14 +730,14 @@ export function registerApiRoutes(
 
     app.get<{ Params: { id: string } }>("/api/sessions/:id/status", async (request, reply) => {
       const localId = Number(request.params.id);
-      const row = db
-        .prepare("SELECT id, provider_session_id, status FROM sessions WHERE id = ?")
-        .get(localId) as { id: number; provider_session_id: string; status: string } | undefined;
+      const row = (await queryGet(dbClient, "SELECT id, provider_session_id, status FROM sessions WHERE id = ?", [
+        localId,
+      ])) as { id: number; provider_session_id: string; status: string } | undefined;
       if (!row) return reply.code(404).send({ error: "not found" });
       try {
         const status = await admin.getStatus(Number(row.provider_session_id));
         const normalized = String(status).toLowerCase();
-        db.prepare("UPDATE sessions SET status = ? WHERE id = ?").run(normalized, localId);
+        await queryRun(dbClient, "UPDATE sessions SET status = ? WHERE id = ?", [normalized, localId]);
         return { status: normalized };
       } catch (err) {
         request.log.warn(err);
@@ -741,9 +747,9 @@ export function registerApiRoutes(
 
     app.post<{ Params: { id: string } }>("/api/sessions/:id/restart", async (request, reply) => {
       const localId = Number(request.params.id);
-      const row = db
-        .prepare("SELECT id, provider_session_id FROM sessions WHERE id = ?")
-        .get(localId) as { id: number; provider_session_id: string } | undefined;
+      const row = (await queryGet(dbClient, "SELECT id, provider_session_id FROM sessions WHERE id = ?", [
+        localId,
+      ])) as { id: number; provider_session_id: string } | undefined;
       if (!row) return reply.code(404).send({ error: "not found" });
       try {
         await admin.restartSession(Number(row.provider_session_id));
@@ -756,13 +762,13 @@ export function registerApiRoutes(
 
     app.post<{ Params: { id: string } }>("/api/sessions/:id/disconnect", async (request, reply) => {
       const localId = Number(request.params.id);
-      const row = db
-        .prepare("SELECT id, provider_session_id FROM sessions WHERE id = ?")
-        .get(localId) as { id: number; provider_session_id: string } | undefined;
+      const row = (await queryGet(dbClient, "SELECT id, provider_session_id FROM sessions WHERE id = ?", [
+        localId,
+      ])) as { id: number; provider_session_id: string } | undefined;
       if (!row) return reply.code(404).send({ error: "not found" });
       try {
         await admin.disconnectSession(Number(row.provider_session_id));
-        db.prepare("UPDATE sessions SET status = 'disconnected' WHERE id = ?").run(localId);
+        await queryRun(dbClient, "UPDATE sessions SET status = 'disconnected' WHERE id = ?", [localId]);
         return { ok: true };
       } catch (err) {
         request.log.error(err);
@@ -794,26 +800,25 @@ export function registerApiRoutes(
 
     app.delete<{ Params: { id: string } }>("/api/sessions/:id", async (request, reply) => {
       const localId = Number(request.params.id);
-      const row = db
-        .prepare("SELECT id, provider_session_id FROM sessions WHERE id = ?")
-        .get(localId) as { id: number; provider_session_id: string } | undefined;
+      const row = (await queryGet(dbClient, "SELECT id, provider_session_id FROM sessions WHERE id = ?", [
+        localId,
+      ])) as { id: number; provider_session_id: string } | undefined;
       if (!row) return reply.code(404).send({ error: "not found" });
       try {
         await admin.deleteSession(Number(row.provider_session_id));
       } catch (err) {
         request.log.warn({ err }, "Wasender remote delete failed or session missing");
       }
-      db.prepare("DELETE FROM sessions WHERE id = ?").run(localId);
+      await queryRun(dbClient, "DELETE FROM sessions WHERE id = ?", [localId]);
       return { ok: true };
     });
   } else {
-    // Read-only local session listing when no PAT is provided
+    // Read-only session listing when no PAT is provided
     app.get("/api/sessions", async () => {
-      return db
-        .prepare(
-          "SELECT id, name, provider_session_id AS providerSessionId, status FROM sessions ORDER BY id",
-        )
-        .all();
+      return queryAll(
+        dbClient,
+        'SELECT id, name, provider_session_id AS "providerSessionId", status FROM sessions ORDER BY id',
+      );
     });
   }
 

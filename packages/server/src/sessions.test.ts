@@ -3,6 +3,26 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { buildApp } from "./app.js";
 import { FakeClock } from "./scheduler.js";
+import type { DbClient } from "./db/client.js";
+
+/** DbClient whose `sql` is a fake postgres client. When present, ported routes
+ * must read/write through it instead of the sqlite fallback. */
+function pgMockDbClient(db: Database.Database, unsafeImpl: (text: string, params: unknown[]) => unknown[]) {
+  const calls: string[] = [];
+  const dbClient = {
+    provider: "supabase_postgres",
+    sql: {
+      unsafe: async (text: string, params: unknown[] = []) => {
+        calls.push(text);
+        return unsafeImpl(text, params);
+      },
+    },
+    sqlite: db,
+    exec: async () => {},
+    close: async () => db.close(),
+  } as unknown as DbClient;
+  return { dbClient, calls };
+}
 
 const schema = readFileSync(new URL("./db/schema.sql", import.meta.url), "utf8");
 
@@ -148,5 +168,85 @@ describe("sessions management API", () => {
     const res = await app.inject({ method: "DELETE", url: "/api/sessions/999" });
     expect(res.statusCode).toBe(404);
     expect(calls.filter((c) => c.method === "DELETE").length).toBe(0);
+  });
+});
+
+describe("sessions via the DbClient seam (provider-aware port)", () => {
+  it("GET /api/sessions reads from the active provider (pg mock), not the sqlite fallback", async () => {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec(schema);
+    const { dbClient, calls } = pgMockDbClient(db, (text) =>
+      /FROM sessions/.test(text)
+        ? [{ id: 7, name: "Provider Session", providerSessionId: "remote-7", status: "connected" }]
+        : [],
+    );
+    const app = await buildApp(dbClient, {
+      clock: new FakeClock(),
+      sendMessage: async () => ({ providerMessageId: "mock" }),
+    });
+    const res = await app.inject({ method: "GET", url: "/api/sessions" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual([
+      { id: 7, name: "Provider Session", providerSessionId: "remote-7", status: "connected" },
+    ]);
+    expect(calls.some((t) => /FROM sessions/.test(t))).toBe(true);
+  });
+
+  it("syncSessions upserts remote Wasender sessions into the active provider", async () => {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec(schema);
+    const writes: Array<{ text: string; params: unknown[] }> = [];
+    const { dbClient } = pgMockDbClient(db, (text, params) => {
+      if (/INSERT INTO sessions/.test(text)) {
+        writes.push({ text, params });
+        return [];
+      }
+      return [];
+    });
+    const app = await buildApp(dbClient, {
+      clock: new FakeClock(),
+      sendMessage: async () => ({ providerMessageId: "mock" }),
+      wasenderPat: "test-pat",
+      fetchImpl: (async () =>
+        jsonResponse({ success: true, data: REMOTE_SESSIONS })) as typeof fetch,
+    });
+    const res = await app.inject({ method: "GET", url: "/api/sessions" });
+    expect(res.statusCode).toBe(200);
+    const insert = writes.find((w) => /INSERT INTO sessions/.test(w.text));
+    expect(insert).toBeDefined();
+    expect(insert!.params).toContain("Patrick Simo");
+    expect(insert!.params).toContain("112691");
+  });
+
+  it("session :id routes read the row and write status through the active provider", async () => {
+    const db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec(schema);
+    const writes: Array<{ text: string; params: unknown[] }> = [];
+    const { dbClient } = pgMockDbClient(db, (text, params) => {
+      if (/FROM sessions WHERE id =/.test(text)) {
+        return [{ id: 1, provider_session_id: "112691", status: "disconnected" }];
+      }
+      if (/UPDATE sessions SET status/.test(text)) {
+        writes.push({ text, params });
+        return [];
+      }
+      return [];
+    });
+    const app = await buildApp(dbClient, {
+      clock: new FakeClock(),
+      sendMessage: async () => ({ providerMessageId: "mock" }),
+      wasenderPat: "test-pat",
+      fetchImpl: (async () =>
+        jsonResponse({ success: true, data: { status: "CONNECTED" } })) as typeof fetch,
+    });
+    const res = await app.inject({ method: "GET", url: "/api/sessions/1/status" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ status: "connected" });
+    const update = writes.find((w) => /UPDATE sessions SET status/.test(w.text));
+    expect(update).toBeDefined();
+    expect(update!.params).toEqual(["connected", 1]);
   });
 });

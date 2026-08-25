@@ -1,6 +1,6 @@
 import { buildApp } from "./app.js";
 import { makeWasenderTransport, markMessageAsRead, sendPresenceUpdate, openDb } from "./wasender.js";
-import { applySqliteSchema, createDatabaseClient } from "./db/client.js";
+import { applySqliteSchema, createDatabaseClient, queryGet } from "./db/client.js";
 import type BetterSqlite3 from "better-sqlite3";
 
 const dbClient = await createDatabaseClient();
@@ -16,6 +16,10 @@ if (dbClient.sqlite) {
   // and autoSeedProductionWorkflows crashes with "no such table: workflows".
   db = openDb(process.env.DB_PATH ?? "wastat.db");
   applySqliteSchema(db);
+  // Attach the schema-applied sqlite handle to the DbClient so buildApp's
+  // unported modules (engine/api/webhooks) can reach it while ported modules
+  // (media) use dbClient.sql (Postgres).
+  dbClient.sqlite = db;
   console.warn(
     "[DB] Supabase provider configured, but the app runtime is SQLite-native — continuing on local SQLite.",
   );
@@ -26,18 +30,19 @@ autoSeedProductionWorkflows(db);
 
 // ponytail: session API keys are read as plaintext until the encryption
 // decision lands; the column is already BLOB so it upgrades in place.
-const getApiKey = db.prepare("SELECT api_key_encrypted FROM sessions WHERE id = ?");
+const getApiKey = async (sessionId: number) =>
+  queryGet(dbClient, "SELECT api_key_encrypted FROM sessions WHERE id = ?", [sessionId]);
 
 process.env.STATIC_DIR ||= "/app/public";
 
 import { makeWasenderAdmin, upsertSession } from "./wasender-admin.js";
 
-const app = await buildApp(db, {
+const app = await buildApp(dbClient, {
   wasenderPat: process.env.WASENDER_PAT,
   sendMessage: process.env.MOCK_SEND
     ? async () => ({ providerMessageId: `mock-${Date.now()}` })
     : async (input) => {
-        const row = getApiKey.get(input.sessionId) as { api_key_encrypted: Buffer | string | null } | undefined;
+        const row = (await getApiKey(input.sessionId)) as { api_key_encrypted: Buffer | string | null } | undefined;
         const apiKey = row?.api_key_encrypted?.toString("utf8") || process.env.WASENDER_PAT;
         if (!apiKey) throw { status: 500, code: "NO_SESSION_KEY" };
         return makeWasenderTransport(db)({ ...input, apiKey });
@@ -45,7 +50,7 @@ const app = await buildApp(db, {
   markMessageAsRead: process.env.MOCK_SEND
     ? async () => {}
     : async (input) => {
-        const row = getApiKey.get(input.sessionId) as { api_key_encrypted: Buffer | string | null } | undefined;
+        const row = (await getApiKey(input.sessionId)) as { api_key_encrypted: Buffer | string | null } | undefined;
         const apiKey = row?.api_key_encrypted?.toString("utf8") || process.env.WASENDER_PAT;
         if (!apiKey) return;
         await markMessageAsRead(apiKey, input.key);
@@ -53,7 +58,7 @@ const app = await buildApp(db, {
   sendPresenceUpdate: process.env.MOCK_SEND
     ? async () => {}
     : async (input) => {
-        const row = getApiKey.get(input.sessionId) as { api_key_encrypted: Buffer | string | null } | undefined;
+        const row = (await getApiKey(input.sessionId)) as { api_key_encrypted: Buffer | string | null } | undefined;
         const apiKey = row?.api_key_encrypted?.toString("utf8") || process.env.WASENDER_PAT;
         if (!apiKey) return;
         await sendPresenceUpdate(apiKey, input.toPhone, input.type);
@@ -64,8 +69,8 @@ if (process.env.WASENDER_PAT) {
   const admin = makeWasenderAdmin(process.env.WASENDER_PAT);
   admin
     .listSessions()
-    .then((sessions) => {
-      for (const s of sessions) upsertSession(db, s);
+    .then(async (sessions) => {
+      for (const s of sessions) await upsertSession(dbClient, s);
       app.log.info({ count: sessions.length }, "Synced Wasender sessions to local DB");
     })
     .catch((err) => {

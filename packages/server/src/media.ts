@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
-import type BetterSqlite3 from "better-sqlite3";
 import type { FastifyInstance } from "fastify";
 import fastifyMultipart from "@fastify/multipart";
+import { queryAll, queryGet, queryRun, type DbClient } from "./db/client.js";
 
 export interface MediaAssetRow {
   id: number;
@@ -126,7 +126,7 @@ export function createStorageFromEnv(): StorageProvider {
 
 export async function registerMediaRoutes(
   app: FastifyInstance,
-  db: BetterSqlite3.Database,
+  db: DbClient,
   storage: StorageProvider = createStorageFromEnv(),
 ) {
   await app.register(fastifyMultipart, {
@@ -141,11 +141,9 @@ export async function registerMediaRoutes(
     if (!item) return reply.code(404).send({ error: "Media not found" });
 
     // Look up mime_type in database
-    const row = db
-      .prepare("SELECT mime_type FROM media_assets WHERE r2_key = ?")
-      .get(request.params.key) as { mime_type: string } | undefined;
+    const row = await queryGet(db, "SELECT mime_type FROM media_assets WHERE r2_key = ?", [request.params.key]);
 
-    reply.type(row?.mime_type ?? item.mimeType);
+    reply.type((row?.mime_type as string | undefined) ?? item.mimeType);
     return reply.send(item.data);
   });
 
@@ -162,28 +160,32 @@ export async function registerMediaRoutes(
     const r2Key = `${hash.slice(0, 16)}-${Date.now()}.${ext}`;
 
     // Check if already stored with identical hash
-    const existing = db
-      .prepare("SELECT id, filename, mime_type AS mimeType, size, r2_key AS r2Key FROM media_assets WHERE hash = ?")
-      .get(hash) as { id: number; filename: string; mimeType: string; size: number; r2Key: string } | undefined;
+    const existing = await queryGet(
+      db,
+      'SELECT id, filename, mime_type AS "mimeType", size, r2_key AS "r2Key" FROM media_assets WHERE hash = ?',
+      [hash],
+    );
 
     if (existing) {
       return {
         id: existing.id,
-        filename: existing.filename,
-        mimeType: existing.mimeType,
-        size: existing.size,
-        publicUrl: storage.getPublicUrl(existing.r2Key),
+        filename: existing.filename as string,
+        mimeType: existing.mimeType as string,
+        size: existing.size as number,
+        publicUrl: storage.getPublicUrl(existing.r2Key as string),
       };
     }
 
     await storage.put(r2Key, buffer, mimeType);
 
-    const info = db
-      .prepare(`
+    const info = await queryRun(
+      db,
+      `
         INSERT INTO media_assets (filename, mime_type, size, r2_key, hash)
         VALUES (?, ?, ?, ?, ?)
-      `)
-      .run(filename, mimeType, buffer.length, r2Key, hash);
+      `,
+      [filename, mimeType, buffer.length, r2Key, hash],
+    );
 
     const id = Number(info.lastInsertRowid);
     const publicUrl = storage.getPublicUrl(r2Key);
@@ -199,32 +201,31 @@ export async function registerMediaRoutes(
 
   // List recent media assets
   app.get("/api/media", async () => {
-    const rows = db
-      .prepare(`
-        SELECT id, filename, mime_type AS mimeType, size, r2_key AS r2Key, created_at AS createdAt
+    const rows = await queryAll(
+      db,
+      `
+        SELECT id, filename, mime_type AS "mimeType", size, r2_key AS "r2Key", created_at AS "createdAt"
         FROM media_assets ORDER BY id DESC LIMIT 100
-      `)
-      .all() as Array<{ id: number; filename: string; mimeType: string; size: number; r2Key: string; createdAt: string }>;
+      `,
+    );
 
     return rows.map((r) => ({
       ...r,
-      publicUrl: storage.getPublicUrl(r.r2Key),
+      publicUrl: storage.getPublicUrl(r.r2Key as string),
     }));
   });
 
   // Delete media asset
   app.delete<{ Params: { id: string } }>("/api/media/:id", async (request, reply) => {
     const id = Number(request.params.id);
-    const row = db.prepare("SELECT id, r2_key AS r2Key FROM media_assets WHERE id = ?").get(id) as
-      | { id: number; r2Key: string }
-      | undefined;
+    const row = await queryGet(db, 'SELECT id, r2_key AS "r2Key" FROM media_assets WHERE id = ?', [id]);
     if (!row) return reply.code(404).send({ error: "not found" });
 
     try {
-      await storage.delete(row.r2Key);
+      await storage.delete(row.r2Key as string);
     } catch {}
 
-    db.prepare("DELETE FROM media_assets WHERE id = ?").run(id);
+    await queryRun(db, "DELETE FROM media_assets WHERE id = ?", [id]);
     return { ok: true };
   });
 }

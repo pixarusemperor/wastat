@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS workflows (
   id            BIGSERIAL PRIMARY KEY,
   name          TEXT NOT NULL,
   description   TEXT,
+  session_id    BIGINT REFERENCES sessions(id) ON DELETE SET NULL,
   active        BOOLEAN NOT NULL DEFAULT false,
   experiment_id BIGINT REFERENCES experiments(id) ON DELETE SET NULL,
   ai_enabled    BOOLEAN NOT NULL DEFAULT false,

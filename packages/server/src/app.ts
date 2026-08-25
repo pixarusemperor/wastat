@@ -7,6 +7,7 @@ import { WASTAT_VERSION } from "@wastat/shared";
 import { createEngine } from "./engine.js";
 import { registerApiRoutes } from "./api.js";
 import { registerMediaRoutes, type StorageProvider } from "./media.js";
+import type { DbClient } from "./db/client.js";
 import { realClock, type Clock } from "./scheduler.js";
 import { makeWasenderAdmin, upsertSession } from "./wasender-admin.js";
 
@@ -37,9 +38,29 @@ export interface AppDeps {
   storage?: StorageProvider;
 }
 
-export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promise<FastifyInstance> {
+export async function buildApp(db: DbClient | BetterSqlite3.Database, deps: AppDeps): Promise<FastifyInstance> {
+  // Seam for the Postgres port: the runtime carries a DbClient (both providers);
+  // ported modules use it directly, unported modules keep the guaranteed sqlite
+  // handle (index.ts always provides one, schema applied). Raw sqlite dbs from
+  // tests are wrapped.
+  const dbClient: DbClient =
+    typeof (db as Partial<DbClient>).provider === "string"
+      ? (db as DbClient)
+      : ({
+          provider: "sqlite",
+          sqlite: db as BetterSqlite3.Database,
+          exec: (q: string) => {
+            (db as BetterSqlite3.Database).exec(q);
+          },
+          close: () => {
+            (db as BetterSqlite3.Database).close();
+          },
+        } as DbClient);
+  const sqliteDb = dbClient.sqlite;
+  if (!sqliteDb) throw new Error("buildApp requires a sqlite-capable database handle");
+
   const app = Fastify({ logger: true });
-  const engine = createEngine(db, {
+  const engine = createEngine(sqliteDb, {
     clock: deps.clock ?? realClock,
     sendMessage: deps.sendMessage,
     markMessageAsRead: deps.markMessageAsRead,
@@ -57,8 +78,8 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
   });
 
   await app.register(cors, { origin: true });
-  registerApiRoutes(app, db, { wasenderPat: deps.wasenderPat, fetchImpl: deps.fetchImpl, engine });
-  await registerMediaRoutes(app, db, deps.storage);
+  registerApiRoutes(app, dbClient, { wasenderPat: deps.wasenderPat, fetchImpl: deps.fetchImpl, engine });
+  await registerMediaRoutes(app, dbClient, deps.storage);
 
   app.get("/health", async () => ({
     status: "ok",
@@ -79,15 +100,15 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
     });
   }
 
-  const getSession = db.prepare(
+  const getSession = sqliteDb.prepare(
     "SELECT id, webhook_secret FROM sessions WHERE provider_session_id = ?",
   );
-  const upsertContact = db.prepare(`
+  const upsertContact = sqliteDb.prepare(`
     INSERT INTO contacts (phone, name) VALUES (?, ?)
     ON CONFLICT(phone) DO UPDATE SET name = COALESCE(excluded.name, contacts.name)
   `);
-  const getContact = db.prepare("SELECT id FROM contacts WHERE phone = ?");
-  const insertMessage = db.prepare(`
+  const getContact = sqliteDb.prepare("SELECT id FROM contacts WHERE phone = ?");
+  const insertMessage = sqliteDb.prepare(`
     INSERT INTO messages (session_id, contact_id, direction, message_type, text, provider_message_id, timestamp)
     VALUES (?, ?, 'in', 'text', ?, ?, ?)
   `);
@@ -131,7 +152,7 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
       // 1. Session Status Updates
       if (eventName === "session.status" || eventName === "connection.update") {
         const newStatus = body.data?.status || body.data?.state || "unknown";
-        db.prepare("UPDATE sessions SET status = ? WHERE id = ?").run(newStatus, session.id);
+        sqliteDb.prepare("UPDATE sessions SET status = ? WHERE id = ?").run(newStatus, session.id);
         return { ok: true, handled: "session.status", status: newStatus };
       }
 
@@ -147,8 +168,8 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
           else if (statusRaw === 2 || statusRaw === "sent") statusStr = "sent";
 
           if (msgId && statusStr) {
-            db.prepare("UPDATE messages SET status = ? WHERE provider_message_id = ?").run(statusStr, msgId);
-            db.prepare(`
+            sqliteDb.prepare("UPDATE messages SET status = ? WHERE provider_message_id = ?").run(statusStr, msgId);
+            sqliteDb.prepare(`
               INSERT INTO events (event_type, session_id, message_id, data)
               SELECT 'message.status_updated', ?, id, ? FROM messages WHERE provider_message_id = ?
             `).run(session.id, JSON.stringify({ status: statusStr }), msgId);
@@ -185,8 +206,8 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
         // Dedup / Echo check: If this provider_message_id is already in messages or events, it is our own automated dispatch!
         const isBotEcho = key.id
           ? Boolean(
-              db.prepare("SELECT id FROM messages WHERE provider_message_id = ?").get(key.id) ||
-              db.prepare("SELECT id FROM events WHERE event_type IN ('api.outbound_dispatch', 'api.outbound_response', 'message.sent') AND data LIKE ?").get(`%${key.id}%`)
+              sqliteDb.prepare("SELECT id FROM messages WHERE provider_message_id = ?").get(key.id) ||
+              sqliteDb.prepare("SELECT id FROM events WHERE event_type IN ('api.outbound_dispatch', 'api.outbound_response', 'message.sent') AND data LIKE ?").get(`%${key.id}%`)
             )
           : false;
 
@@ -196,14 +217,14 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
 
         if (contact) {
           const pausedUntil = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
-          db.prepare(`
+          sqliteDb.prepare(`
             UPDATE contacts
             SET bot_status = 'paused_human',
                 bot_paused_until = ?
             WHERE id = ?
           `).run(pausedUntil, contact.id);
 
-          db.prepare(`
+          sqliteDb.prepare(`
             INSERT INTO events (event_type, session_id, contact_id, data)
             VALUES ('human_takeover.activated', ?, ?, ?)
           `).run(session.id, contact.id, JSON.stringify({ paused_until: pausedUntil, provider_message_id: key.id }));
@@ -244,7 +265,7 @@ export async function buildApp(db: BetterSqlite3.Database, deps: AppDeps): Promi
         return { duplicate: true };
       }
 
-      const msg = db
+      const msg = sqliteDb
         .prepare("SELECT id, contact_id FROM messages WHERE provider_message_id = ?")
         .get(key.id) as { id: number; contact_id: number };
       engine.attributeReply(msg.id); // PRD §32 — even when nothing matches

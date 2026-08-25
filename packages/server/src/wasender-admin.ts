@@ -1,4 +1,4 @@
-import type BetterSqlite3 from "better-sqlite3";
+import { queryRun, type DbClient } from "./db/client.js";
 
 const BASE = `${process.env.WASENDER_BASE_URL ?? "https://www.wasenderapi.com/api"}`;
 
@@ -57,13 +57,17 @@ export function makeWasenderAdmin(pat: string, fetchImpl: typeof fetch = fetch) 
 
 export type WasenderAdmin = ReturnType<typeof makeWasenderAdmin>;
 
-/** Mirror a remote session list into the local sessions table. */
-export function upsertSession(db: BetterSqlite3.Database, s: WasenderSession): void {
-  db.prepare(`
+/** Mirror a remote session list into the sessions table (active provider). */
+export async function upsertSession(db: DbClient, s: WasenderSession): Promise<void> {
+  await queryRun(
+    db,
+    `
     INSERT INTO sessions (name, provider_session_id, status, api_key_encrypted, webhook_secret)
     VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(provider_session_id) DO UPDATE SET
       name = excluded.name, status = excluded.status,
       api_key_encrypted = excluded.api_key_encrypted, webhook_secret = excluded.webhook_secret
-  `).run(s.name, String(s.id), s.status, Buffer.from(s.api_key, "utf8"), s.webhook_secret ?? null);
+  `,
+    [s.name, String(s.id), s.status, Buffer.from(s.api_key, "utf8"), s.webhook_secret ?? null],
+  );
 }

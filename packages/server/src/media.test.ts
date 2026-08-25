@@ -7,6 +7,7 @@ import { buildApp } from "./app.js";
 import { FakeClock } from "./scheduler.js";
 import { createLocalStorage } from "./media.js";
 import { makeWasenderTransport } from "./wasender.js";
+import { createDatabaseClient } from "./db/client.js";
 
 const schema = readFileSync(new URL("./db/schema.sql", import.meta.url), "utf8");
 
@@ -79,6 +80,62 @@ describe("Media Storage & Wasender Transport Pipeline", () => {
     expect(delRes.statusCode).toBe(200);
     expect(db.prepare("SELECT COUNT(*) AS count FROM media_assets").get()).toEqual({ count: 0 });
 
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("media routes work through the DbClient seam (provider-aware helpers on sqlite)", async () => {
+    // Force sqlite mode: this shell exports Supabase env vars that would flip the client.
+    const savedEnv: Record<string, string | undefined> = {};
+    for (const k of ["DATABASE_URL", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_ANON_KEY"]) {
+      savedEnv[k] = process.env[k];
+      delete process.env[k];
+    }
+    const dbClient = await createDatabaseClient({ sqlitePath: ":memory:" });
+    const tempDir = mkdtempSync(join(tmpdir(), "wastat-media-dbclient-"));
+    const storage = createLocalStorage(tempDir, "http://localhost:4000");
+    const app = await buildApp(dbClient, {
+      clock: new FakeClock(),
+      sendMessage: async () => ({ providerMessageId: "mock" }),
+      storage,
+    });
+
+    const boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW";
+    const payload = [
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="file"; filename="hero.png"',
+      "Content-Type: image/png",
+      "",
+      "fake-png-binary-content",
+      `--${boundary}--`,
+    ].join("\r\n");
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/media/upload",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      payload,
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json();
+    expect(body.publicUrl).toContain("/api/media/files/");
+
+    const row = dbClient.sqlite!.prepare("SELECT filename FROM media_assets WHERE id = ?").get(body.id) as any;
+    expect(row.filename).toBe("hero.png");
+
+    const list = await app.inject({ method: "GET", url: "/api/media" });
+    expect(list.statusCode).toBe(200);
+    expect(list.json().length).toBe(1);
+    expect(list.json()[0].mimeType).toBe("image/png");
+
+    const del = await app.inject({ method: "DELETE", url: `/api/media/${body.id}` });
+    expect(del.statusCode).toBe(200);
+    expect(dbClient.sqlite!.prepare("SELECT COUNT(*) AS n FROM media_assets").get()).toEqual({ n: 0 });
+
+    await dbClient.close();
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
     rmSync(tempDir, { recursive: true, force: true });
   });
 
