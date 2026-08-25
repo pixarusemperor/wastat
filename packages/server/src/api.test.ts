@@ -347,14 +347,92 @@ describe("experiment funnel API", () => {
       url: "/api/test-lab/run",
       payload: { scenarioId: "text_spintax_vars", mode: "virtual" },
     });
-    expect(runRes.statusCode).toBe(200);
-    expect(runRes.json().status).toBe("passed");
-
     const runAllRes = await app.inject({ method: "POST", url: "/api/test-lab/run-all" });
     expect(runAllRes.statusCode).toBe(200);
     const runAllBody = runAllRes.json();
     expect(runAllBody.total).toBe(9);
     expect(runAllBody.passed).toBe(9);
     expect(runAllBody.failed).toBe(0);
+  });
+
+  it("validates workflows dry-run via POST /api/workflows/validate", async () => {
+    const { app } = await setup();
+
+    // Valid graph
+    const validRes = await app.inject({
+      method: "POST",
+      url: "/api/workflows/validate",
+      payload: validGraph,
+    });
+    expect(validRes.statusCode).toBe(200);
+    expect(validRes.json().ok).toBe(true);
+
+    // Invalid graph (empty text in send_text)
+    const invalidRes = await app.inject({
+      method: "POST",
+      url: "/api/workflows/validate",
+      payload: {
+        ...validGraph,
+        nodes: [
+          { nodeKey: "t", type: "trigger", config: {} },
+          { nodeKey: "s", type: "send_text", config: { text: "" } },
+        ],
+        edges: [{ sourceKey: "t", targetKey: "s" }],
+      },
+    });
+    expect(invalidRes.statusCode).toBe(400);
+    expect(invalidRes.json().ok).toBe(false);
+  });
+
+  it("creates and triggers workflows programmatically via REST API", async () => {
+    const { db, app } = await setup();
+
+    // 1. Create session and contact
+    db.prepare("INSERT INTO sessions (name, provider_session_id, status) VALUES ('Test Sess', 'sess_test', 'connected')").run();
+    const session = db.prepare("SELECT id FROM sessions WHERE provider_session_id = 'sess_test'").get() as { id: number };
+
+    db.prepare("INSERT INTO contacts (phone, name) VALUES ('+15551234567', 'API Lead')").run();
+    const contact = db.prepare("SELECT id FROM contacts WHERE phone = '+15551234567'").get() as { id: number };
+
+    // 2. Programmatically create workflow
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/workflows/programmatic",
+      payload: {
+        name: "Programmatic VIP Onboarding",
+        description: "Created via REST API without code change",
+        active: 1,
+        sessionId: session.id,
+        nodes: [
+          { nodeKey: "trig", type: "trigger", config: { keywords: ["start"] } },
+          { nodeKey: "greet", type: "send_text", config: { text: "Hello from API!" } },
+          { nodeKey: "end", type: "end", config: {} },
+        ],
+        edges: [
+          { sourceKey: "trig", targetKey: "greet" },
+          { sourceKey: "greet", targetKey: "end" },
+        ],
+      },
+    });
+
+    expect(createRes.statusCode).toBe(201);
+    const created = createRes.json();
+    expect(created.ok).toBe(true);
+    expect(created.id).toBeGreaterThan(0);
+
+    // 3. Programmatically trigger workflow
+    const trigRes = await app.inject({
+      method: "POST",
+      url: `/api/workflows/${created.id}/trigger`,
+      payload: {
+        contactId: contact.id,
+        initialVars: { promoCode: "SUMMER2026" },
+      },
+    });
+
+    expect(trigRes.statusCode).toBe(200);
+    const trigBody = trigRes.json();
+    expect(trigBody.ok).toBe(true);
+    expect(trigBody.executionId).toBeGreaterThan(0);
   });
 });

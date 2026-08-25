@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type BetterSqlite3 from "better-sqlite3";
 import { makeWasenderAdmin, upsertSession } from "./wasender-admin.js";
 import type { createEngine } from "./engine.js";
+import { validateWorkflowGraph } from "@wastat/shared";
 import { aiRoutes } from "./routes/ai.js";
 import { broadcastRoutes } from "./routes/broadcasts.js";
 import { mcpRoutes } from "./routes/mcp.js";
@@ -151,6 +152,152 @@ export function registerApiRoutes(
     const workflowId = Number(info.lastInsertRowid);
     saveGraph(workflowId, g);
     return reply.code(201).send({ id: workflowId });
+  });
+
+  /**
+   * Pre-flight dry-run validation endpoint (inspired by clawflow POST /flows/validate)
+   */
+  app.post("/api/workflows/validate", async (request, reply) => {
+    const parsed = parseGraph(request.body);
+    if ("error" in parsed) {
+      return reply.code(400).send({ ok: false, error: parsed.error });
+    }
+    const validation = validateWorkflowGraph({
+      nodes: parsed.graph.nodes.map((n) => ({
+        nodeKey: n.nodeKey,
+        type: n.type as any,
+        config: n.config as any,
+        positionX: n.positionX,
+        positionY: n.positionY,
+      })),
+      edges: parsed.graph.edges.map((e) => ({
+        sourceKey: e.sourceKey,
+        targetKey: e.targetKey,
+        handle: e.handle,
+      })),
+    });
+    if (!validation.ok) {
+      return reply.code(400).send(validation);
+    }
+    return reply.code(200).send(validation);
+  });
+
+  /**
+   * Programmatic Workflow Generation API:
+   * Enables external systems, scripts, and LLMs to create or upsert workflows with full static schema validation.
+   */
+  app.post("/api/workflows/programmatic", async (request, reply) => {
+    const body = (request.body ?? {}) as Record<string, any>;
+    const parsed = parseGraph(body);
+    if ("error" in parsed) {
+      return reply.code(400).send({ ok: false, error: parsed.error });
+    }
+
+    const g = parsed.graph;
+    const validation = validateWorkflowGraph({
+      nodes: g.nodes.map((n) => ({
+        nodeKey: n.nodeKey,
+        type: n.type as any,
+        config: n.config as any,
+        positionX: n.positionX,
+        positionY: n.positionY,
+      })),
+      edges: g.edges.map((e) => ({
+        sourceKey: e.sourceKey,
+        targetKey: e.targetKey,
+        handle: e.handle,
+      })),
+    });
+
+    if (!validation.ok) {
+      return reply.code(400).send({
+        ok: false,
+        error: "Structural validation failed",
+        errors: validation.errors,
+        warnings: validation.warnings,
+      });
+    }
+
+    let workflowId: number;
+    const existing = db.prepare("SELECT id FROM workflows WHERE name = ?").get(g.name) as { id: number } | undefined;
+
+    if (existing) {
+      workflowId = existing.id;
+      db.prepare(`
+        UPDATE workflows 
+        SET description = ?, active = ?, session_id = ?, experiment_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        WHERE id = ?
+      `).run(g.description, g.active, g.sessionId, g.experimentId, workflowId);
+    } else {
+      const info = insertWorkflow.run(g.name, g.description, g.active, g.sessionId, g.experimentId);
+      workflowId = Number(info.lastInsertRowid);
+    }
+
+    saveGraph(workflowId, g);
+
+    return reply.code(existing ? 200 : 201).send({
+      ok: true,
+      id: workflowId,
+      name: g.name,
+      active: g.active === 1,
+      sessionId: g.sessionId,
+      warnings: validation.warnings,
+    });
+  });
+
+  /**
+   * Programmatic Workflow Trigger API:
+   * Instantly executes a workflow for a specific phone number or contact.
+   */
+  app.post<{
+    Params: { id: string };
+    Body: { phone?: string; contactId?: number; sessionId?: number; initialVars?: Record<string, unknown> };
+  }>("/api/workflows/:id/trigger", async (request, reply) => {
+    const workflowId = Number(request.params.id);
+    const wf = db.prepare("SELECT * FROM workflows WHERE id = ?").get(workflowId) as
+      | { id: number; name: string; session_id: number | null; active: number }
+      | undefined;
+    if (!wf) return reply.code(404).send({ error: "Workflow not found" });
+    if (!opts?.engine) return reply.code(500).send({ error: "Engine is not initialized on server" });
+
+    const { phone, contactId, sessionId, initialVars } = request.body || {};
+    let targetContactId = contactId;
+
+    if (!targetContactId && phone) {
+      db.prepare("INSERT INTO contacts (phone, name) VALUES (?, 'Programmatic Contact') ON CONFLICT DO NOTHING").run(phone);
+      const c = db.prepare("SELECT id FROM contacts WHERE phone = ?").get(phone) as { id: number } | undefined;
+      targetContactId = c?.id;
+    }
+
+    if (!targetContactId) {
+      return reply.code(400).send({ error: "Either 'phone' or 'contactId' is required to trigger a workflow" });
+    }
+
+    const targetSessionId = sessionId || wf.session_id;
+    if (!targetSessionId) {
+      return reply.code(400).send({ error: "No session_id assigned to workflow or provided in request" });
+    }
+
+    try {
+      const executionId = opts.engine.startExecution(
+        wf.id,
+        targetSessionId,
+        targetContactId,
+        undefined,
+        initialVars || {},
+      );
+
+      return reply.code(200).send({
+        ok: true,
+        workflowId: wf.id,
+        workflowName: wf.name,
+        executionId,
+        sessionId: targetSessionId,
+        contactId: targetContactId,
+      });
+    } catch (err: any) {
+      return reply.code(500).send({ error: err?.message || String(err) });
+    }
   });
 
   app.get("/api/workflows", async () => {

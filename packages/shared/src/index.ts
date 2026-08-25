@@ -12,4 +12,5 @@ export * from "./matching.js";
 export * from "./spintax.js";
 export * from "./stats.js";
 export * from "./types.js";
+export * from "./validation.js";
 export * from "./capabilities/registry.js";
