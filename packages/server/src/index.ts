@@ -7,6 +7,9 @@ console.log(`[DB] Database initialized successfully using provider: ${dbClient.p
 
 const db = dbClient.sqlite ?? openDb(process.env.DB_PATH ?? "wastat.db");
 
+import { autoSeedProductionWorkflows } from "./seed-defaults.js";
+autoSeedProductionWorkflows(db);
+
 // ponytail: session API keys are read as plaintext until the encryption
 // decision lands; the column is already BLOB so it upgrades in place.
 const getApiKey = db.prepare("SELECT api_key_encrypted FROM sessions WHERE id = ?");
