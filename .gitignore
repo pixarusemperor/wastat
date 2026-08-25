@@ -32,3 +32,6 @@ packages/server/data/
 Thumbs.db
 .idea/
 .vscode/
+
+# Browser QA screenshots
+artifacts/
