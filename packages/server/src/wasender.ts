@@ -272,16 +272,31 @@ export async function removeGroupParticipants(
   }).catch(() => {});
 }
 
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
 
 export function openDb(path: string): BetterSqlite3.Database {
-  if (path !== ":memory:") {
+  let targetPath = path;
+  if (targetPath !== ":memory:") {
     try {
-      mkdirSync(dirname(path), { recursive: true });
-    } catch {}
+      mkdirSync(dirname(targetPath), { recursive: true });
+    } catch {
+      targetPath = join(process.cwd(), "data", "wastat.db");
+      try {
+        mkdirSync(dirname(targetPath), { recursive: true });
+      } catch {}
+    }
   }
-  const db = new Database(path);
+  let db: BetterSqlite3.Database;
+  try {
+    db = new Database(targetPath);
+  } catch {
+    targetPath = join(process.cwd(), "data", "wastat.db");
+    try {
+      mkdirSync(dirname(targetPath), { recursive: true });
+    } catch {}
+    db = new Database(targetPath);
+  }
   db.pragma("journal_mode = WAL"); // ADR 0001
   db.pragma("foreign_keys = ON"); // ADR 0001
   return db;
