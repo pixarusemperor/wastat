@@ -7,7 +7,15 @@ import { WASTAT_VERSION } from "@wastat/shared";
 import { createEngine } from "./engine.js";
 import { registerApiRoutes } from "./api.js";
 import { registerMediaRoutes, type StorageProvider } from "./media.js";
-import type { DbClient } from "./db/client.js";
+import {
+  queryAll,
+  queryGet,
+  queryRun,
+  execRun,
+  toDbClient,
+  jsonToDb,
+  type DbClient,
+} from "./db/client.js";
 import { realClock, type Clock } from "./scheduler.js";
 import { makeWasenderAdmin, upsertSession } from "./wasender-admin.js";
 
@@ -43,24 +51,10 @@ export async function buildApp(db: DbClient | BetterSqlite3.Database, deps: AppD
   // ported modules use it directly, unported modules keep the guaranteed sqlite
   // handle (index.ts always provides one, schema applied). Raw sqlite dbs from
   // tests are wrapped.
-  const dbClient: DbClient =
-    typeof (db as Partial<DbClient>).provider === "string"
-      ? (db as DbClient)
-      : ({
-          provider: "sqlite",
-          sqlite: db as BetterSqlite3.Database,
-          exec: (q: string) => {
-            (db as BetterSqlite3.Database).exec(q);
-          },
-          close: () => {
-            (db as BetterSqlite3.Database).close();
-          },
-        } as DbClient);
-  const sqliteDb = dbClient.sqlite;
-  if (!sqliteDb) throw new Error("buildApp requires a sqlite-capable database handle");
+  const dbClient = toDbClient(db);
 
   const app = Fastify({ logger: true });
-  const engine = createEngine(sqliteDb, {
+  const engine = createEngine(dbClient, {
     clock: deps.clock ?? realClock,
     sendMessage: deps.sendMessage,
     markMessageAsRead: deps.markMessageAsRead,
@@ -100,18 +94,26 @@ export async function buildApp(db: DbClient | BetterSqlite3.Database, deps: AppD
     });
   }
 
-  const getSession = sqliteDb.prepare(
-    "SELECT id, webhook_secret FROM sessions WHERE provider_session_id = ?",
-  );
-  const upsertContact = sqliteDb.prepare(`
-    INSERT INTO contacts (phone, name) VALUES (?, ?)
-    ON CONFLICT(phone) DO UPDATE SET name = COALESCE(excluded.name, contacts.name)
-  `);
-  const getContact = sqliteDb.prepare("SELECT id FROM contacts WHERE phone = ?");
-  const insertMessage = sqliteDb.prepare(`
-    INSERT INTO messages (session_id, contact_id, direction, message_type, text, provider_message_id, timestamp)
-    VALUES (?, ?, 'in', 'text', ?, ?, ?)
-  `);
+  const getSession = async (providerSessionId: string) =>
+    queryGet(dbClient, "SELECT id, webhook_secret FROM sessions WHERE provider_session_id = ?", [
+      providerSessionId,
+    ]);
+  const upsertContact = async (phone: string, name: string | null) =>
+    execRun(
+      dbClient,
+      `INSERT INTO contacts (phone, name) VALUES (?, ?)
+    ON CONFLICT(phone) DO UPDATE SET name = COALESCE(excluded.name, contacts.name)`,
+      [phone, name],
+    );
+  const getContact = async (phone: string) =>
+    queryGet(dbClient, "SELECT id FROM contacts WHERE phone = ?", [phone]);
+  const insertMessage = async (sessionId: number, contactId: number, text: string, providerMessageId: string, ts: string) =>
+    queryRun(
+      dbClient,
+      `INSERT INTO messages (session_id, contact_id, direction, message_type, text, provider_message_id, timestamp)
+    VALUES (?, ?, 'in', 'text', ?, ?, ?)`,
+      [sessionId, contactId, text, providerMessageId, ts],
+    );
 
   interface WasenderWebhook {
     event: string;
@@ -135,7 +137,7 @@ export async function buildApp(db: DbClient | BetterSqlite3.Database, deps: AppD
   app.post<{ Params: { providerSessionId: string } }>(
     "/webhooks/wasender/:providerSessionId",
     async (request, reply) => {
-      const session = getSession.get(request.params.providerSessionId) as
+      const session = (await getSession(request.params.providerSessionId)) as
         | { id: number; webhook_secret: string | null }
         | undefined;
       const signature = request.headers["x-webhook-signature"];
@@ -152,7 +154,7 @@ export async function buildApp(db: DbClient | BetterSqlite3.Database, deps: AppD
       // 1. Session Status Updates
       if (eventName === "session.status" || eventName === "connection.update") {
         const newStatus = body.data?.status || body.data?.state || "unknown";
-        sqliteDb.prepare("UPDATE sessions SET status = ? WHERE id = ?").run(newStatus, session.id);
+        await queryRun(dbClient, "UPDATE sessions SET status = ? WHERE id = ?", [newStatus, session.id]);
         return { ok: true, handled: "session.status", status: newStatus };
       }
 
@@ -168,11 +170,16 @@ export async function buildApp(db: DbClient | BetterSqlite3.Database, deps: AppD
           else if (statusRaw === 2 || statusRaw === "sent") statusStr = "sent";
 
           if (msgId && statusStr) {
-            sqliteDb.prepare("UPDATE messages SET status = ? WHERE provider_message_id = ?").run(statusStr, msgId);
-            sqliteDb.prepare(`
-              INSERT INTO events (event_type, session_id, message_id, data)
-              SELECT 'message.status_updated', ?, id, ? FROM messages WHERE provider_message_id = ?
-            `).run(session.id, JSON.stringify({ status: statusStr }), msgId);
+            await queryRun(dbClient, "UPDATE messages SET status = ? WHERE provider_message_id = ?", [
+              statusStr,
+              msgId,
+            ]);
+            await execRun(
+              dbClient,
+              `INSERT INTO events (event_type, session_id, message_id, data)
+              SELECT 'message.status_updated', ?, id, ? FROM messages WHERE provider_message_id = ?`,
+              [session.id, jsonToDb(dbClient, { status: statusStr }), msgId],
+            );
           }
         }
         return { ok: true, handled: "messages.update" };
@@ -200,14 +207,18 @@ export async function buildApp(db: DbClient | BetterSqlite3.Database, deps: AppD
 
       // Handle Human Takeover: If fromMe is true, only activate takeover if message was NOT sent by WaStat bot
       if (key.fromMe) {
-        upsertContact.run(phone, pushName);
-        const contact = getContact.get(phone) as { id: number } | undefined;
+        await upsertContact(phone, pushName);
+        const contact = (await getContact(phone)) as { id: number } | undefined;
 
         // Dedup / Echo check: If this provider_message_id is already in messages or events, it is our own automated dispatch!
         const isBotEcho = key.id
           ? Boolean(
-              sqliteDb.prepare("SELECT id FROM messages WHERE provider_message_id = ?").get(key.id) ||
-              sqliteDb.prepare("SELECT id FROM events WHERE event_type IN ('api.outbound_dispatch', 'api.outbound_response', 'message.sent') AND data LIKE ?").get(`%${key.id}%`)
+              (await queryGet(dbClient, "SELECT id FROM messages WHERE provider_message_id = ?", [key.id])) ||
+              (await queryGet(
+                dbClient,
+                `SELECT id FROM events WHERE event_type IN ('api.outbound_dispatch', 'api.outbound_response', 'message.sent') AND ${dbClient.sql ? "data::text" : "data"} LIKE ?`,
+                [`%${key.id}%`],
+              ))
             )
           : false;
 
@@ -217,17 +228,21 @@ export async function buildApp(db: DbClient | BetterSqlite3.Database, deps: AppD
 
         if (contact) {
           const pausedUntil = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
-          sqliteDb.prepare(`
-            UPDATE contacts
+          await queryRun(
+            dbClient,
+            `UPDATE contacts
             SET bot_status = 'paused_human',
                 bot_paused_until = ?
-            WHERE id = ?
-          `).run(pausedUntil, contact.id);
+            WHERE id = ?`,
+            [pausedUntil, contact.id],
+          );
 
-          sqliteDb.prepare(`
-            INSERT INTO events (event_type, session_id, contact_id, data)
-            VALUES ('human_takeover.activated', ?, ?, ?)
-          `).run(session.id, contact.id, JSON.stringify({ paused_until: pausedUntil, provider_message_id: key.id }));
+          await queryRun(
+            dbClient,
+            `INSERT INTO events (event_type, session_id, contact_id, data)
+            VALUES ('human_takeover.activated', ?, ?, ?)`,
+            [session.id, contact.id, jsonToDb(dbClient, { paused_until: pausedUntil, provider_message_id: key.id })],
+          );
         }
         return { ignored: "fromMe_takeover_activated" };
       }
@@ -252,24 +267,18 @@ export async function buildApp(db: DbClient | BetterSqlite3.Database, deps: AppD
       const ts = body.timestamp ? new Date(body.timestamp * 1000).toISOString() : new Date().toISOString();
 
       try {
-        upsertContact.run(phone, pushName);
-        const contact = getContact.get(phone) as { id: number };
-        insertMessage.run(
-          session.id,
-          contact.id,
-          messageBody,
-          key.id,
-          ts,
-        );
+        await upsertContact(phone, pushName);
+        const contact = (await getContact(phone)) as { id: number };
+        await insertMessage(session.id, contact.id, messageBody, key.id, ts);
       } catch {
         return { duplicate: true };
       }
 
-      const msg = sqliteDb
-        .prepare("SELECT id, contact_id FROM messages WHERE provider_message_id = ?")
-        .get(key.id) as { id: number; contact_id: number };
-      engine.attributeReply(msg.id); // PRD §32 — even when nothing matches
-      const executionId = engine.handleIncomingMessage(session.id, msg.contact_id, msg.id, isGroup);
+      const msg = (await queryGet(dbClient, "SELECT id, contact_id FROM messages WHERE provider_message_id = ?", [
+        key.id,
+      ])) as { id: number; contact_id: number };
+      await engine.attributeReply(msg.id); // PRD §32 — even when nothing matches
+      const executionId = await engine.handleIncomingMessage(session.id, msg.contact_id, msg.id, isGroup);
       return { ok: true, executionId };
     },
   );

@@ -184,7 +184,7 @@ export async function runSafariDemo() {
   `).run(safariSession.id, contact.id, "Hi! I am looking for information on the Safari villa collection.");
   const triggerMsgId = Number(msgInfo.lastInsertRowid);
 
-  const executionId = engine.startExecution(workflowId, safariSession.id, contact.id, triggerMsgId);
+  const executionId = await engine.startExecution(workflowId, safariSession.id, contact.id, triggerMsgId);
   console.log(`[Safari Demo] Inbound message matched! Execution #${executionId} started.`);
 
   // Run through each step to completion

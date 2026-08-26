@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
+import Database from "better-sqlite3";
 import type BetterSqlite3 from "better-sqlite3";
 import { makeWasenderAdmin, upsertSession } from "./wasender-admin.js";
-import { queryAll, queryGet, queryRun, type DbClient } from "./db/client.js";
+import { queryAll, queryGet, queryRun, execRun, jsonFromDb, jsonToDb, trueSql, applySqliteSchema, type DbClient } from "./db/client.js";
 import type { createEngine } from "./engine.js";
 import { validateWorkflowGraph } from "@wastat/shared";
 import { aiRoutes } from "./routes/ai.js";
@@ -43,6 +44,18 @@ export interface ApiRoutesOptions {
   wasenderPat?: string;
   fetchImpl?: typeof fetch;
   engine?: ReturnType<typeof createEngine>;
+}
+
+/**
+ * Test-lab virtual scenarios run against an isolated in-memory sqlite DB with
+ * the schema applied. Used when the active provider is Supabase (no sqlite
+ * handle exists); virtual scenarios never touch the active provider's data.
+ */
+function makeVirtualDb(): BetterSqlite3.Database {
+  const mem = new Database(":memory:");
+  mem.pragma("foreign_keys = ON");
+  applySqliteSchema(mem);
+  return mem;
 }
 
 interface GraphInput {
@@ -120,10 +133,11 @@ export function registerApiRoutes(
   dbClient: DbClient,
   opts?: ApiRoutesOptions,
 ): void {
-  // Unported routes run against the sqlite side of the seam (index.ts guarantees
-  // a schema-applied handle in every mode); ported routes use dbClient directly.
+  // Routes run against the active provider through the provider-aware helpers.
+  // `db` (the sqlite handle) only exists in sqlite mode; Supabase mode has no
+  // sqlite fallback anymore, so nothing here may assume it. The in-memory
+  // virtual test-lab scenarios construct their own isolated sqlite handle.
   const db = dbClient.sqlite;
-  if (!db) throw new Error("registerApiRoutes requires a sqlite-capable database handle");
 
   void app.register(aiRoutes);
   void app.register(broadcastRoutes);
@@ -318,7 +332,7 @@ export function registerApiRoutes(
     Body: { phone?: string; contactId?: number; sessionId?: number; initialVars?: Record<string, unknown> };
   }>("/api/workflows/:id/trigger", async (request, reply) => {
     const workflowId = Number(request.params.id);
-    const wf = db.prepare("SELECT * FROM workflows WHERE id = ?").get(workflowId) as
+    const wf = (await queryGet(dbClient, "SELECT * FROM workflows WHERE id = ?", [workflowId])) as
       | { id: number; name: string; session_id: number | null; active: number }
       | undefined;
     if (!wf) return reply.code(404).send({ error: "Workflow not found" });
@@ -328,8 +342,10 @@ export function registerApiRoutes(
     let targetContactId = contactId;
 
     if (!targetContactId && phone) {
-      db.prepare("INSERT INTO contacts (phone, name) VALUES (?, 'Programmatic Contact') ON CONFLICT DO NOTHING").run(phone);
-      const c = db.prepare("SELECT id FROM contacts WHERE phone = ?").get(phone) as { id: number } | undefined;
+      await execRun(dbClient, "INSERT INTO contacts (phone, name) VALUES (?, 'Programmatic Contact') ON CONFLICT DO NOTHING", [phone]);
+      const c = (await queryGet(dbClient, "SELECT id FROM contacts WHERE phone = ?", [phone])) as
+        | { id: number }
+        | undefined;
       targetContactId = c?.id;
     }
 
@@ -343,7 +359,7 @@ export function registerApiRoutes(
     }
 
     try {
-      const executionId = opts.engine.startExecution(
+      const executionId = await opts.engine.startExecution(
         wf.id,
         targetSessionId,
         targetContactId,
@@ -513,72 +529,82 @@ export function registerApiRoutes(
     if (typeof b.name !== "string" || !b.name.trim()) {
       return reply.code(400).send({ error: "name is required" });
     }
-    const info = db
-      .prepare("INSERT INTO experiments (name, description, active) VALUES (?, ?, ?)")
-      .run(b.name.trim(), typeof b.description === "string" ? b.description.trim() : null, b.active === false ? 0 : 1);
+    const info = await queryRun(
+      dbClient,
+      "INSERT INTO experiments (name, description, active) VALUES (?, ?, ?)",
+      [b.name.trim(), typeof b.description === "string" ? b.description.trim() : null, b.active === false ? 0 : 1],
+    );
     return reply.code(201).send({ id: Number(info.lastInsertRowid) });
   });
 
   app.get("/api/experiments", async () => {
-    return db
-      .prepare(`
+    return queryAll(
+      dbClient,
+      `
         SELECT e.id, e.name, e.description, e.active,
                (SELECT COUNT(*) FROM workflows WHERE experiment_id = e.id) AS variantCount,
                (SELECT COUNT(DISTINCT contact_id) FROM experiment_assignments WHERE experiment_id = e.id) AS totalAssigned
         FROM experiments e
         ORDER BY e.id DESC
-      `)
-      .all();
+      `,
+    );
   });
 
   app.get<{ Params: { id: string } }>("/api/experiments/:id", async (request, reply) => {
     const expId = Number(request.params.id);
-    const exp = db
-      .prepare("SELECT id, name, description, active, created_at AS createdAt FROM experiments WHERE id = ?")
-      .get(expId) as Record<string, unknown> | undefined;
+    const exp = (await queryGet(
+      dbClient,
+      "SELECT id, name, description, active, created_at AS createdAt FROM experiments WHERE id = ?",
+      [expId],
+    )) as Record<string, unknown> | undefined;
     if (!exp) return reply.code(404).send({ error: "not found" });
-    const workflows = db
-      .prepare("SELECT id, name, description, active FROM workflows WHERE experiment_id = ? ORDER BY id ASC")
-      .all(expId);
+    const workflows = await queryAll(
+      dbClient,
+      "SELECT id, name, description, active FROM workflows WHERE experiment_id = ? ORDER BY id ASC",
+      [expId],
+    );
     return { ...exp, workflows };
   });
 
   app.put<{ Params: { id: string } }>("/api/experiments/:id", async (request, reply) => {
     const expId = Number(request.params.id);
-    const exp = db.prepare("SELECT id FROM experiments WHERE id = ?").get(expId);
+    const exp = await queryGet(dbClient, "SELECT id FROM experiments WHERE id = ?", [expId]);
     if (!exp) return reply.code(404).send({ error: "not found" });
     const b = (request.body ?? {}) as { name?: unknown; description?: unknown; active?: unknown };
     if (typeof b.name !== "string" || !b.name.trim()) {
       return reply.code(400).send({ error: "name is required" });
     }
-    db.prepare("UPDATE experiments SET name = ?, description = ?, active = ? WHERE id = ?").run(
+    await queryRun(dbClient, "UPDATE experiments SET name = ?, description = ?, active = ? WHERE id = ?", [
       b.name.trim(),
       typeof b.description === "string" ? b.description.trim() : null,
       b.active === false ? 0 : 1,
       expId,
-    );
+    ]);
     return { ok: true };
   });
 
   app.delete<{ Params: { id: string } }>("/api/experiments/:id", async (request, reply) => {
     const expId = Number(request.params.id);
-    const exp = db.prepare("SELECT id FROM experiments WHERE id = ?").get(expId);
+    const exp = await queryGet(dbClient, "SELECT id FROM experiments WHERE id = ?", [expId]);
     if (!exp) return reply.code(404).send({ error: "not found" });
-    db.transaction(() => {
-      db.prepare("UPDATE workflows SET experiment_id = NULL WHERE experiment_id = ?").run(expId);
-      db.prepare("DELETE FROM experiment_assignments WHERE experiment_id = ?").run(expId);
-      db.prepare("DELETE FROM experiments WHERE id = ?").run(expId);
-    })();
+    await execRun(dbClient, "UPDATE workflows SET experiment_id = NULL WHERE experiment_id = ?", [expId]);
+    await execRun(dbClient, "DELETE FROM experiment_assignments WHERE experiment_id = ?", [expId]);
+    await execRun(dbClient, "DELETE FROM experiments WHERE id = ?", [expId]);
     return { ok: true };
   });
 
   // PRD §33: reply-rate per variant and experiment totals.
   app.get<{ Params: { id: string } }>("/api/experiments/:id/stats", async (request, reply) => {
     const expId = Number(request.params.id);
-    const exp = db.prepare("SELECT id, name, description, active FROM experiments WHERE id = ?").get(expId) as { id: number; name: string; description: string | null; active: number } | undefined;
+    const exp = (await queryGet(
+      dbClient,
+      "SELECT id, name, description, active FROM experiments WHERE id = ?",
+      [expId],
+    )) as { id: number; name: string; description: string | null; active: number } | undefined;
     if (!exp) return reply.code(404).send({ error: "not found" });
-    const variants = db
-      .prepare(`
+    const variants = (await queryAll(
+      dbClient,
+      `
         SELECT w.id AS workflowId, w.name, w.active,
           (SELECT COUNT(DISTINCT contact_id) FROM experiment_assignments WHERE experiment_id = ? AND workflow_id = w.id) AS assigned,
           (SELECT COUNT(DISTINCT m.contact_id) FROM messages m
@@ -591,8 +617,9 @@ export function registerApiRoutes(
         FROM workflows w
         WHERE w.experiment_id = ?
         ORDER BY w.id ASC
-      `)
-      .all(expId, expId) as Array<{ workflowId: number; name: string; active: number; assigned: number; messaged: number; replied: number }>;
+      `,
+      [expId, expId],
+    )) as Array<{ workflowId: number; name: string; active: number; assigned: number; messaged: number; replied: number }>;
 
     const variantStats = variants.map((r) => ({
       ...r,
@@ -619,16 +646,18 @@ export function registerApiRoutes(
   // PRD §46: inbox — conversations per session, then a thread.
   app.get<{ Querystring: { sessionId?: string } }>("/api/conversations", async (request) => {
     const sessionId = Number(request.query.sessionId ?? 1);
-    return db
-      .prepare(`
+    return queryAll(
+      dbClient,
+      `
         SELECT c.id AS contactId, c.phone, c.name,
                MAX(m.timestamp) AS lastAt,
                (SELECT text FROM messages WHERE session_id = ? AND contact_id = c.id ORDER BY id DESC LIMIT 1) AS lastMessage
         FROM contacts c
         JOIN messages m ON m.contact_id = c.id AND m.session_id = ?
         GROUP BY c.id ORDER BY lastAt DESC LIMIT 200
-      `)
-      .all(sessionId, sessionId);
+      `,
+      [sessionId, sessionId],
+    );
   });
 
   app.get<{ Querystring: { sessionId?: string; contactId?: string } }>(
@@ -636,8 +665,9 @@ export function registerApiRoutes(
     async (request, reply) => {
       const { sessionId = "1", contactId = "" } = request.query;
       if (!contactId) return reply.code(400).send({ error: "contactId is required" });
-      return db
-        .prepare(`
+      return queryAll(
+        dbClient,
+        `
           SELECT
             m.id,
             m.direction,
@@ -664,8 +694,9 @@ export function registerApiRoutes(
           LEFT JOIN experiments reply_e ON reply_e.id = reply_w.experiment_id
           WHERE m.session_id = ? AND m.contact_id = ?
           ORDER BY m.id ASC LIMIT 500
-        `)
-        .all(Number(sessionId), Number(contactId));
+        `,
+        [Number(sessionId), Number(contactId)],
+      );
     },
   );
 
@@ -680,37 +711,42 @@ export function registerApiRoutes(
       if (!text) return reply.code(400).send({ error: "text is required" });
 
       // Upsert contact
-      db.prepare("INSERT INTO contacts (phone) VALUES (?) ON CONFLICT(phone) DO NOTHING").run(phone);
-      const contact = db.prepare("SELECT id FROM contacts WHERE phone = ?").get(phone) as { id: number };
+      await execRun(dbClient, "INSERT INTO contacts (phone) VALUES (?) ON CONFLICT(phone) DO NOTHING", [phone]);
+      const contact = (await queryGet(dbClient, "SELECT id FROM contacts WHERE phone = ?", [phone])) as {
+        id: number;
+      };
 
       // Ensure session exists
       const session =
-        (db.prepare("SELECT id FROM sessions WHERE id = ?").get(sessionId) as { id: number } | undefined) ??
-        (db.prepare("SELECT id FROM sessions ORDER BY id ASC LIMIT 1").get() as { id: number } | undefined);
+        ((await queryGet(dbClient, "SELECT id FROM sessions WHERE id = ?", [sessionId])) as
+          | { id: number }
+          | undefined) ??
+        ((await queryGet(dbClient, "SELECT id FROM sessions ORDER BY id ASC LIMIT 1")) as
+          | { id: number }
+          | undefined);
 
       let actualSessionId = session?.id;
       if (!actualSessionId) {
-        const ins = db
-          .prepare(
-            "INSERT INTO sessions (name, provider_session_id, status) VALUES ('Default Session', 'default-1', 'connected')",
-          )
-          .run();
-        actualSessionId = Number(ins.lastInsertRowid);
+        const ins = await queryRun(
+          dbClient,
+          "INSERT INTO sessions (name, provider_session_id, status) VALUES ('Default Session', 'default-1', 'connected')",
+        );
+        actualSessionId = ins.lastInsertRowid ?? 0;
       }
 
       // Insert incoming message
-      const info = db
-        .prepare(`
-          INSERT INTO messages (session_id, contact_id, direction, message_type, text, provider_message_id, timestamp)
-          VALUES (?, ?, 'in', 'text', ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-        `)
-        .run(actualSessionId, contact.id, text, `sim-${Date.now()}`);
+      const info = await queryRun(
+        dbClient,
+        `INSERT INTO messages (session_id, contact_id, direction, message_type, text, provider_message_id, timestamp)
+        VALUES (?, ?, 'in', 'text', ?, ?, ${isPg ? "now()" : "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"})`,
+        [actualSessionId, contact.id, text, `sim-${Date.now()}`],
+      );
 
       const messageId = Number(info.lastInsertRowid);
 
       if (opts?.engine) {
-        opts.engine.attributeReply(messageId);
-        const executionId = opts.engine.handleIncomingMessage(
+        await opts.engine.attributeReply(messageId);
+        const executionId = await opts.engine.handleIncomingMessage(
           actualSessionId,
           contact.id,
           messageId,
@@ -862,9 +898,9 @@ export function registerApiRoutes(
       "/api/sessions/:id/sync-webhook",
       async (request, reply) => {
         const localId = Number(request.params.id);
-        const row = db
-          .prepare("SELECT id, provider_session_id FROM sessions WHERE id = ?")
-          .get(localId) as { id: number; provider_session_id: string } | undefined;
+        const row = (await queryGet(dbClient, "SELECT id, provider_session_id FROM sessions WHERE id = ?", [
+          localId,
+        ])) as { id: number; provider_session_id: string } | undefined;
         if (!row) return reply.code(404).send({ error: "not found" });
         try {
           const base = process.env.PUBLIC_BASE_URL || "https://wassflow.orizongroup.online";
@@ -910,7 +946,9 @@ export function registerApiRoutes(
 
   // List contacts with funnel phase, bot status, and latest message
   app.get("/api/contacts", async () => {
-    return db.prepare(`
+    return queryAll(
+      dbClient,
+      `
       SELECT 
         c.id,
         c.phone,
@@ -924,24 +962,37 @@ export function registerApiRoutes(
         (SELECT direction FROM messages WHERE contact_id = c.id ORDER BY id DESC LIMIT 1) AS lastMessageDirection
       FROM contacts c
       ORDER BY lastMessageTime DESC, c.id DESC
-    `).all();
+    `,
+    );
   });
 
   // Get contact 360 profile with attributes and tags
   app.get<{ Params: { id: string } }>("/api/contacts/:id", async (request, reply) => {
     const contactId = Number(request.params.id);
-    const contact = db.prepare(`
+    const contact = (await queryGet(
+      dbClient,
+      `
       SELECT id, phone, name, funnel_phase AS funnelPhase, bot_status AS botStatus, bot_paused_until AS botPausedUntil, created_at AS createdAt
       FROM contacts WHERE id = ?
-    `).get(contactId) as Record<string, unknown> | undefined;
+    `,
+      [contactId],
+    )) as Record<string, unknown> | undefined;
 
     if (!contact) return reply.code(404).send({ error: "contact not found" });
 
-    const attrRows = db.prepare("SELECT key, value, updated_at AS updatedAt FROM contact_attributes WHERE contact_id = ?").all(contactId) as Array<{ key: string; value: string; updatedAt: string }>;
+    const attrRows = (await queryAll(
+      dbClient,
+      "SELECT key, value, updated_at AS updatedAt FROM contact_attributes WHERE contact_id = ?",
+      [contactId],
+    )) as Array<{ key: string; value: string; updatedAt: string }>;
     const attributes: Record<string, { value: string; updatedAt: string }> = {};
     for (const a of attrRows) attributes[a.key] = { value: a.value, updatedAt: a.updatedAt };
 
-    const tagRows = db.prepare("SELECT tag FROM contact_tags WHERE contact_id = ?").all(contactId) as Array<{ tag: string }>;
+    const tagRows = (await queryAll(
+      dbClient,
+      "SELECT tag FROM contact_tags WHERE contact_id = ?",
+      [contactId],
+    )) as Array<{ tag: string }>;
     const tags = tagRows.map((t) => t.tag);
 
     return { ...contact, attributes, tags };
@@ -959,11 +1010,11 @@ export function registerApiRoutes(
         pausedUntil = new Date(Date.now() + pauseHours * 3600 * 1000).toISOString();
       }
 
-      db.prepare("UPDATE contacts SET bot_status = ?, bot_paused_until = ? WHERE id = ?").run(
+      await queryRun(dbClient, "UPDATE contacts SET bot_status = ?, bot_paused_until = ? WHERE id = ?", [
         status ?? "active",
         pausedUntil,
         contactId,
-      );
+      ]);
 
       return { ok: true, botStatus: status, botPausedUntil: pausedUntil };
     },
@@ -971,7 +1022,7 @@ export function registerApiRoutes(
 
   // Resume all contacts to active
   app.post("/api/contacts/resume-all", async (request, reply) => {
-    db.prepare("UPDATE contacts SET bot_status = 'active', bot_paused_until = NULL WHERE bot_status = 'paused_human'").run();
+    await queryRun(dbClient, "UPDATE contacts SET bot_status = 'active', bot_paused_until = NULL WHERE bot_status = 'paused_human'");
     return { ok: true, message: "All contacts resumed to active" };
   });
 
@@ -982,28 +1033,40 @@ export function registerApiRoutes(
       const contactId = Number(request.params.id);
       const { workflowId, notes } = request.body ?? {};
 
-      const contact = db.prepare("SELECT * FROM contacts WHERE id = ?").get(contactId) as { phone: string; funnel_phase: string } | undefined;
+      const contact = (await queryGet(dbClient, "SELECT * FROM contacts WHERE id = ?", [contactId])) as { phone: string; funnel_phase: string } | undefined;
       if (!contact) return reply.code(404).send({ error: "contact not found" });
 
       const fromPhase = contact.funnel_phase;
       const toPhase = "phase_2_active";
 
-      db.prepare(`
+      await queryRun(
+        dbClient,
+        `
         UPDATE contacts 
         SET funnel_phase = ?, bot_status = 'active', bot_paused_until = NULL 
         WHERE id = ?
-      `).run(toPhase, contactId);
+      `,
+        [toPhase, contactId],
+      );
 
-      db.prepare(`
+      await queryRun(
+        dbClient,
+        `
         INSERT INTO funnel_transitions (contact_id, from_phase, to_phase, triggered_by, operator_notes)
         VALUES (?, ?, ?, 'human_operator', ?)
-      `).run(contactId, fromPhase, toPhase, notes ?? null);
+      `,
+        [contactId, fromPhase, toPhase, notes ?? null],
+      );
 
       // Trigger Phase 2 Workflow if provided or if found in experiment
       if (workflowId && opts?.engine) {
-        const session = db.prepare("SELECT session_id FROM messages WHERE contact_id = ? ORDER BY id DESC LIMIT 1").get(contactId) as { session_id: number } | undefined;
+        const session = (await queryGet(
+          dbClient,
+          "SELECT session_id FROM messages WHERE contact_id = ? ORDER BY id DESC LIMIT 1",
+          [contactId],
+        )) as { session_id: number } | undefined;
         const sessionId = session?.session_id ?? 1;
-        opts.engine.startExecution(workflowId, sessionId, contactId);
+        await opts.engine.startExecution(workflowId, sessionId, contactId);
       }
 
       return { ok: true, funnelPhase: toPhase };
@@ -1013,7 +1076,11 @@ export function registerApiRoutes(
   // Private Notes for Conversation Thread
   app.get<{ Params: { id: string } }>("/api/contacts/:id/notes", async (request) => {
     const contactId = Number(request.params.id);
-    return db.prepare("SELECT id, contact_id AS contactId, author, body, created_at AS createdAt FROM private_notes WHERE contact_id = ? ORDER BY id ASC").all(contactId);
+    return queryAll(
+      dbClient,
+      "SELECT id, contact_id AS contactId, author, body, created_at AS createdAt FROM private_notes WHERE contact_id = ? ORDER BY id ASC",
+      [contactId],
+    );
   });
 
   app.post<{ Params: { id: string }; Body: { body: string; author?: string } }>(
@@ -1023,7 +1090,11 @@ export function registerApiRoutes(
       const { body, author = "operator" } = request.body ?? {};
       if (!body || !body.trim()) return reply.code(400).send({ error: "body is required" });
 
-      const info = db.prepare("INSERT INTO private_notes (contact_id, author, body) VALUES (?, ?, ?)").run(contactId, author, body.trim());
+      const info = await queryRun(dbClient, "INSERT INTO private_notes (contact_id, author, body) VALUES (?, ?, ?)", [
+        contactId,
+        author,
+        body.trim(),
+      ]);
       return { ok: true, id: Number(info.lastInsertRowid) };
     },
   );
@@ -1031,7 +1102,9 @@ export function registerApiRoutes(
   // Conversation Message Thread
   app.get<{ Params: { id: string } }>("/api/contacts/:id/messages", async (request) => {
     const contactId = Number(request.params.id);
-    return db.prepare(`
+    return queryAll(
+      dbClient,
+      `
       SELECT 
         m.id,
         m.session_id AS sessionId,
@@ -1047,7 +1120,9 @@ export function registerApiRoutes(
       FROM messages m
       WHERE m.contact_id = ?
       ORDER BY m.id ASC
-    `).all(contactId);
+    `,
+      [contactId],
+    );
   });
 
   // Operator manual send (auto-pauses bot for 24h)
@@ -1058,20 +1133,27 @@ export function registerApiRoutes(
       const { text, sessionId } = request.body ?? {};
       if (!text || !text.trim()) return reply.code(400).send({ error: "text is required" });
 
-      const contact = db.prepare("SELECT phone FROM contacts WHERE id = ?").get(contactId) as { phone: string } | undefined;
+      const contact = (await queryGet(dbClient, "SELECT phone FROM contacts WHERE id = ?", [contactId])) as { phone: string } | undefined;
       if (!contact) return reply.code(404).send({ error: "contact not found" });
 
       const sid = sessionId ?? 1;
       const pausedUntil = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
 
       // Set bot status to paused_human
-      db.prepare("UPDATE contacts SET bot_status = 'paused_human', bot_paused_until = ? WHERE id = ?").run(pausedUntil, contactId);
+      await queryRun(dbClient, "UPDATE contacts SET bot_status = 'paused_human', bot_paused_until = ? WHERE id = ?", [
+        pausedUntil,
+        contactId,
+      ]);
 
-      // Record outbound message in SQLite
-      const info = db.prepare(`
+      // Record outbound message in the active provider
+      const info = await queryRun(
+        dbClient,
+        `
         INSERT INTO messages (session_id, contact_id, direction, message_type, text, status, timestamp)
         VALUES (?, ?, 'out', 'text', ?, 'sent', ?)
-      `).run(sid, contactId, text.trim(), new Date().toISOString());
+      `,
+        [sid, contactId, text.trim(), new Date().toISOString()],
+      );
 
       return { ok: true, messageId: Number(info.lastInsertRowid), botStatus: "paused_human", botPausedUntil: pausedUntil };
     },
@@ -1080,15 +1162,23 @@ export function registerApiRoutes(
   // TASK-07: per-variant multi-stage funnel counts.
   app.get<{ Params: { id: string } }>("/api/experiments/:id/funnel", async (request, reply) => {
     const experimentId = Number(request.params.id);
-    const exp = db.prepare("SELECT id FROM experiments WHERE id = ?").get(experimentId);
+    const exp = await queryGet(dbClient, "SELECT id FROM experiments WHERE id = ?", [experimentId]);
     if (!exp) return reply.code(404).send({ error: "not found" });
-    const workflows = db
-      .prepare("SELECT id, name FROM workflows WHERE experiment_id = ? ORDER BY id ASC")
-      .all(experimentId) as Array<{ id: number; name: string }>;
+    const workflows = (await queryAll(
+      dbClient,
+      "SELECT id, name FROM workflows WHERE experiment_id = ? ORDER BY id ASC",
+      [experimentId],
+    )) as Array<{ id: number; name: string }>;
 
-    const variants = workflows.map((wf) => {
-      const row = db
-        .prepare(`
+    // strftime('%s', ...) is SQLite-only; Postgres uses EXTRACT(EPOCH FROM ...).
+    const epochSql = isPg ? "EXTRACT(EPOCH FROM" : "CAST(strftime('%s',";
+    const epochSqlEnd = isPg ? ")" : ") AS INTEGER)";
+
+    const variants = [];
+    for (const wf of workflows) {
+      const row = (await queryGet(
+        dbClient,
+        `
           SELECT
             (SELECT COUNT(DISTINCT we.contact_id) FROM workflow_executions we WHERE we.workflow_id = w.id) AS hookReached,
             (SELECT COUNT(DISTINCT m.contact_id) FROM messages m
@@ -1103,13 +1193,14 @@ export function registerApiRoutes(
                JOIN messages o ON o.id = r.in_reply_to_id
                JOIN workflow_executions we ON we.id = o.workflow_execution_id
               WHERE we.workflow_id = w.id AND r.direction = 'in'
-                AND CAST(strftime('%s', r.timestamp) AS INTEGER) <= CAST(strftime('%s', o.timestamp) AS INTEGER) + 7200) AS replied2h,
+                AND ${epochSql} r.timestamp ${epochSqlEnd} <= ${epochSql} o.timestamp ${epochSqlEnd} + 7200) AS replied2h,
             (SELECT COUNT(DISTINCT fc.contact_id) FROM funnel_conversions fc WHERE fc.workflow_id = w.id) AS qualified,
             (SELECT COUNT(DISTINCT we.contact_id) FROM workflow_executions we JOIN contacts c ON c.id = we.contact_id
               WHERE we.workflow_id = w.id AND c.funnel_phase = 'phase_2_active') AS phase2Closed
           FROM workflows w WHERE w.id = ?
-        `)
-        .get(wf.id) as Record<string, number>;
+        `,
+        [wf.id],
+      )) as Record<string, number>;
 
       // Clamp each stage against the previous one so the funnel stays monotone.
       const hookDelivered = { reached: row.hookReached ?? 0, converted: row.hookConverted ?? 0 };
@@ -1130,7 +1221,7 @@ export function registerApiRoutes(
         converted: Math.min(row.phase2Closed ?? 0, qualified.converted),
       };
 
-      return {
+      variants.push({
         workflowId: wf.id,
         name: wf.name,
         stages: {
@@ -1140,8 +1231,8 @@ export function registerApiRoutes(
           qualified,
           phase_2_closed: phase2Closed,
         },
-      };
-    });
+      });
+    }
 
     return {
       experimentId,
@@ -1155,7 +1246,7 @@ export function registerApiRoutes(
   // ============================================================
 
   app.get("/api/executions/summary", async () => {
-    const row = (db.prepare(`
+    const row = ((await queryGet(dbClient, `
       SELECT
         COUNT(*) AS total,
         SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running,
@@ -1165,7 +1256,7 @@ export function registerApiRoutes(
         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
         SUM(CASE WHEN status = 'paused_human' THEN 1 ELSE 0 END) AS pausedHuman
       FROM workflow_executions
-    `).get() ?? {}) as Record<string, number | null>;
+    `)) ?? {}) as Record<string, number | null>;
 
     return {
       total: row.total ?? 0,
@@ -1219,7 +1310,7 @@ export function registerApiRoutes(
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-    const rows = db.prepare(`
+    const rows = (await queryAll(dbClient, `
       SELECT 
         we.id,
         we.workflow_id AS workflowId,
@@ -1244,9 +1335,9 @@ export function registerApiRoutes(
       ${whereClause}
       ORDER BY we.id DESC
       LIMIT ? OFFSET ?
-    `).all(...params, limit, offset);
+    `, [...params, limit, offset])) as Record<string, unknown>[];
 
-    const totalRow = db.prepare(`
+    const totalRow = (await queryGet(dbClient, `
       SELECT COUNT(*) AS count
       FROM workflow_executions we
       LEFT JOIN workflows w ON w.id = we.workflow_id
@@ -1254,7 +1345,7 @@ export function registerApiRoutes(
       LEFT JOIN contacts c ON c.id = we.contact_id
       LEFT JOIN messages m ON m.id = we.trigger_message_id
       ${whereClause}
-    `).get(...params) as { count: number } | undefined;
+    `, params)) as { count: number } | undefined;
 
     return {
       executions: rows,
@@ -1266,7 +1357,7 @@ export function registerApiRoutes(
 
   app.get<{ Params: { id: string } }>("/api/executions/:id", async (request, reply) => {
     const executionId = Number(request.params.id);
-    const execution = db.prepare(`
+    const execution = (await queryGet(dbClient, `
       SELECT 
         we.id,
         we.workflow_id AS workflowId,
@@ -1290,11 +1381,11 @@ export function registerApiRoutes(
       LEFT JOIN contacts c ON c.id = we.contact_id
       LEFT JOIN messages m ON m.id = we.trigger_message_id
       WHERE we.id = ?
-    `).get(executionId) as Record<string, unknown> | undefined;
+    `, [executionId])) as Record<string, unknown> | undefined;
 
     if (!execution) return reply.code(404).send({ error: "Execution not found" });
 
-    const events = (db.prepare(`
+    const events = (await queryAll(dbClient, `
       SELECT 
         id,
         event_type AS eventType,
@@ -1307,10 +1398,11 @@ export function registerApiRoutes(
       FROM events
       WHERE execution_id = ?
       ORDER BY id ASC
-    `).all(executionId) as any[]).map((e) => {
+    `, [executionId])) as any[];
+    const parsedEvents = events.map((e) => {
       let parsedData = {};
       try {
-        parsedData = JSON.parse(e.data || "{}");
+        parsedData = jsonFromDb(e.data);
       } catch {}
       return {
         ...e,
@@ -1320,28 +1412,34 @@ export function registerApiRoutes(
 
     return {
       ...execution,
-      vars: typeof execution.vars === "string" ? JSON.parse(execution.vars || "{}") : execution.vars,
-      events,
+      vars: jsonFromDb(execution.vars),
+      events: parsedEvents,
     };
   });
 
   app.post<{ Params: { id: string } }>("/api/executions/:id/retry", async (request, reply) => {
     const executionId = Number(request.params.id);
-    const execution = db.prepare("SELECT * FROM workflow_executions WHERE id = ?").get(executionId) as
+    const execution = (await queryGet(dbClient, "SELECT * FROM workflow_executions WHERE id = ?", [
+      executionId,
+    ])) as
       | { id: number; workflow_id: number; session_id: number; contact_id: number; current_node_key: string | null }
       | undefined;
 
     if (!execution) return reply.code(404).send({ error: "Execution not found" });
 
     // Reset status to running and resume
-    db.prepare("UPDATE workflow_executions SET status = 'running', finished_at = NULL WHERE id = ?").run(executionId);
-    db.prepare(`
-      INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
-      VALUES ('execution.retried', ?, ?, ?, '{}')
-    `).run(execution.session_id, execution.contact_id, executionId);
+    await queryRun(dbClient, "UPDATE workflow_executions SET status = 'running', finished_at = NULL WHERE id = ?", [
+      executionId,
+    ]);
+    await queryRun(
+      dbClient,
+      `INSERT INTO events (event_type, session_id, contact_id, execution_id, data)
+      VALUES ('execution.retried', ?, ?, ?, ?)`,
+      [execution.session_id, execution.contact_id, executionId, jsonToDb(dbClient, {})],
+    );
 
     if (opts?.engine?.step) {
-      void opts.engine.step(executionId);
+      await opts.engine.step(executionId);
     }
 
     return { ok: true, executionId };
@@ -1374,7 +1472,7 @@ export function registerApiRoutes(
         return reply.code(400).send({ error: "Live dual-instance testing requires senderSessionId and receiverPhone" });
       }
 
-      const senderSession = db.prepare("SELECT * FROM sessions WHERE id = ?").get(senderSessionId) as { id: number; name: string } | undefined;
+      const senderSession = (await queryGet(dbClient, "SELECT * FROM sessions WHERE id = ?", [senderSessionId])) as { id: number; name: string } | undefined;
       if (!senderSession) return reply.code(404).send({ error: "Sender session not found" });
 
       const startTime = Date.now();
@@ -1385,18 +1483,21 @@ export function registerApiRoutes(
         if (!opts?.engine) throw new Error("Engine is not initialized on server");
 
         // Insert or find contact for the receiver phone
-        db.prepare("INSERT INTO contacts (phone, name) VALUES (?, 'Dual-Instance Bot Peer') ON CONFLICT DO NOTHING").run(receiverPhone);
-        const contact = db.prepare("SELECT id FROM contacts WHERE phone = ?").get(receiverPhone) as { id: number };
+        await execRun(dbClient, "INSERT INTO contacts (phone, name) VALUES (?, 'Dual-Instance Bot Peer') ON CONFLICT DO NOTHING", [receiverPhone]);
+        const contact = (await queryGet(dbClient, "SELECT id FROM contacts WHERE phone = ?", [receiverPhone])) as { id: number };
 
         // Enqueue direct live test message
         const textToSend = messageText || `[WaStat Live Test ${Date.now()}] Testing dual-instance connectivity and bot automation`;
         
         // Find active workflow for the receiver
-        const activeWf = db.prepare("SELECT id FROM workflows WHERE active = 1 ORDER BY id DESC LIMIT 1").get() as { id: number } | undefined;
+        const activeWf = (await queryGet(
+          dbClient,
+          `SELECT id FROM workflows WHERE active = ${trueSql(dbClient)} ORDER BY id DESC LIMIT 1`,
+        )) as { id: number } | undefined;
         
         let execId: number | null = null;
         if (activeWf) {
-          execId = opts.engine.startExecution(activeWf.id, senderSessionId, contact.id, undefined, {
+          execId = await opts.engine.startExecution(activeWf.id, senderSessionId, contact.id, undefined, {
             live_test: true,
             timestamp: new Date().toISOString(),
           });
@@ -1431,8 +1532,11 @@ export function registerApiRoutes(
       }
     }
 
-    // Default: Run virtual scenario safely in memory
-    const res = await runVirtualScenario(db, scenarioId, storage);
+    // Default: Run virtual scenario safely in memory. On Supabase there is no
+    // sqlite handle, so virtual scenarios get an isolated in-memory sqlite DB
+    // with the schema applied (they never touch the active provider).
+    const virtualDb = db ?? makeVirtualDb();
+    const res = await runVirtualScenario(virtualDb, scenarioId, storage);
     return res;
   });
 
@@ -1444,8 +1548,9 @@ export function registerApiRoutes(
     const virtualScenarios = SCENARIO_CATALOG.filter((s) => s.supportsVirtual);
     const results = [];
 
+    const virtualDb = db ?? makeVirtualDb();
     for (const sc of virtualScenarios) {
-      const res = await runVirtualScenario(db, sc.id, storage);
+      const res = await runVirtualScenario(virtualDb, sc.id, storage);
       results.push(res);
     }
 

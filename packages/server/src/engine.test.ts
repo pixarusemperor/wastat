@@ -61,7 +61,7 @@ describe("engine", () => {
     );
     const { sessionId, contactId } = seedContactSession(db);
 
-    const execId = engine.startExecution(workflowId, sessionId, contactId);
+    const execId = await engine.startExecution(workflowId, sessionId, contactId);
 
     expect(execId).not.toBeNull();
     expect(sent).toEqual([]); // nothing sent synchronously — goes through the queue
@@ -84,7 +84,7 @@ describe("engine", () => {
       [["t", "s"], ["s", "e"]],
     );
     const { sessionId, contactId } = seedContactSession(db);
-    const execId = engine.startExecution(workflowId, sessionId, contactId)!;
+    const execId = await engine.startExecution(workflowId, sessionId, contactId)!;
 
     await engine.scheduler.tick();
 
@@ -117,7 +117,7 @@ describe("engine", () => {
       [["t", "d"], ["d", "e"]],
     );
     const { sessionId, contactId } = seedContactSession(db);
-    const execId = engine.startExecution(workflowId, sessionId, contactId)!;
+    const execId = await engine.startExecution(workflowId, sessionId, contactId)!;
 
     const job = db
       .prepare("SELECT type, run_at FROM jobs WHERE execution_id = ?")
@@ -162,7 +162,7 @@ describe("engine", () => {
       [["t", "d"], ["d", "e"]],
     );
     const { sessionId, contactId } = seedContactSession(db);
-    const execId = engine.startExecution(workflowId, sessionId, contactId)!;
+    const execId = await engine.startExecution(workflowId, sessionId, contactId)!;
 
     const evt = db
       .prepare("SELECT data FROM events WHERE execution_id = ? AND event_type = 'delay.scheduled'")
@@ -196,7 +196,7 @@ describe("engine", () => {
       .run(sessionId, contactId, "hello I want to know your PRICE");
     const triggerId = Number(msg.lastInsertRowid);
 
-    const matched = engine.startExecution(workflowId, sessionId, contactId, triggerId)!;
+    const matched = await engine.startExecution(workflowId, sessionId, contactId, triggerId)!;
     await engine.scheduler.tick();
     expect(sent.length).toBe(1);
     expect(db.prepare("SELECT status FROM workflow_executions WHERE id = ?").get(matched)).toEqual({
@@ -208,7 +208,7 @@ describe("engine", () => {
         "INSERT INTO messages (session_id, contact_id, direction, message_type, text, timestamp) VALUES (?, ?, 'in', 'text', ?, '2026-01-01T00:01:00Z')",
       )
       .run(sessionId, contactId, "completely unrelated greeting");
-    const unmatched = engine.startExecution(
+    const unmatched = await engine.startExecution(
       workflowId,
       sessionId,
       contactId,
@@ -221,7 +221,7 @@ describe("engine", () => {
     });
   });
 
-  it("the same trigger message never starts a second execution (PRD §53)", () => {
+  it("the same trigger message never starts a second execution (PRD §53)", async () => {
     const { db, engine } = setup();
     const workflowId = seedWorkflow(
       db,
@@ -238,8 +238,8 @@ describe("engine", () => {
       )
       .run(sessionId, contactId);
 
-    const first = engine.startExecution(workflowId, sessionId, contactId, Number(msg.lastInsertRowid));
-    const second = engine.startExecution(workflowId, sessionId, contactId, Number(msg.lastInsertRowid));
+    const first = await engine.startExecution(workflowId, sessionId, contactId, Number(msg.lastInsertRowid));
+    const second = await engine.startExecution(workflowId, sessionId, contactId, Number(msg.lastInsertRowid));
 
     expect(first).not.toBeNull();
     expect(second).toBeNull();
@@ -258,7 +258,7 @@ describe("engine", () => {
       [["t", "s"], ["s", "e"]],
     );
     const { sessionId, contactId } = seedContactSession(db);
-    const execId = engine.startExecution(workflowId, sessionId, contactId)!;
+    const execId = await engine.startExecution(workflowId, sessionId, contactId)!;
     await engine.scheduler.tick();
 
     // customer's reply arrives
@@ -268,7 +268,7 @@ describe("engine", () => {
       )
       .run(sessionId, contactId);
 
-    engine.attributeReply(Number(reply.lastInsertRowid));
+    await engine.attributeReply(Number(reply.lastInsertRowid));
 
     const linked = db
       .prepare("SELECT in_reply_to_id FROM messages WHERE id = ?")
@@ -296,7 +296,7 @@ describe("engine", () => {
       [["t", "m"], ["m", "e"]],
     );
     const { sessionId, contactId } = seedContactSession(db);
-    const execId = engine.startExecution(workflowId, sessionId, contactId)!;
+    const execId = await engine.startExecution(workflowId, sessionId, contactId)!;
 
     await engine.scheduler.tick();
     expect(sent).toEqual([{ sessionId, toPhone: "+15550001", kind: "media", mediaId: 7 }]);
@@ -328,7 +328,7 @@ describe("engine", () => {
     );
     const { sessionId, contactId } = seedContactSession(db);
     db.prepare("UPDATE contacts SET name = 'Alice' WHERE id = ?").run(contactId);
-    const execId = engine.startExecution(workflowId, sessionId, contactId)!;
+    const execId = await engine.startExecution(workflowId, sessionId, contactId)!;
 
     await engine.scheduler.tick();
     expect(sent).toEqual([
@@ -403,7 +403,7 @@ describe("engine", () => {
       const deliveryWf = keywordWorkflow(db, "where is my delivery", 60);
 
       const { sessionId, contactId, messageId } = seedIncoming(db, "hello I want to know your PRICE");
-      const execId = engine.handleIncomingMessage(sessionId, contactId, messageId)!;
+      const execId = await engine.handleIncomingMessage(sessionId, contactId, messageId)!;
 
       expect(execId).not.toBeNull();
       expect(
@@ -419,7 +419,7 @@ describe("engine", () => {
       const anotherHigh = keywordWorkflow(db, "refund please", 100, 9);
 
       const { sessionId, contactId, messageId } = seedIncoming(db, "refund please");
-      const execId = engine.handleIncomingMessage(sessionId, contactId, messageId)!;
+      const execId = await engine.handleIncomingMessage(sessionId, contactId, messageId)!;
 
       // all three match at score 1.0 → priority 9 wins → lowest id among those wins
       expect(highPriority).toBeLessThan(anotherHigh);
@@ -433,7 +433,7 @@ describe("engine", () => {
       const { db, engine } = setup();
       keywordWorkflow(db, "refund please", 100);
       const { sessionId, contactId, messageId } = seedIncoming(db, "good morning");
-      expect(engine.handleIncomingMessage(sessionId, contactId, messageId)).toBeNull();
+      expect(await engine.handleIncomingMessage(sessionId, contactId, messageId)).toBeNull();
     });
 
     it("distributes experiment variants equally and sticks assignments", async () => {
@@ -460,9 +460,9 @@ describe("engine", () => {
       const b = seedIncoming(db, "price");       // contact B
       const c = seedIncoming(db, "price");       // contact C
 
-      const eA = engine.handleIncomingMessage(a.sessionId, a.contactId, a.messageId)!;
-      const eB = engine.handleIncomingMessage(b.sessionId, b.contactId, b.messageId)!;
-      const eC = engine.handleIncomingMessage(c.sessionId, c.contactId, c.messageId)!;
+      const eA = (await engine.handleIncomingMessage(a.sessionId, a.contactId, a.messageId))!;
+      const eB = (await engine.handleIncomingMessage(b.sessionId, b.contactId, b.messageId))!;
+      const eC = (await engine.handleIncomingMessage(c.sessionId, c.contactId, c.messageId))!;
       void eB; void eC;
 
       const wfOf = (eid: number) =>
@@ -473,7 +473,7 @@ describe("engine", () => {
 
       // sticky: contact A messages again -> lands on their original variant
       const a2 = seedIncoming(db, "price");
-      const eA2 = engine.handleIncomingMessage(a2.sessionId, a2.contactId, a2.messageId)!;
+      const eA2 = (await engine.handleIncomingMessage(a2.sessionId, a2.contactId, a2.messageId))!;
       expect(wfOf(eA2)).toBe(wfOf(eA));
     });
   });
@@ -491,7 +491,7 @@ describe("engine", () => {
         [["t", "s"], ["s", "e"]],
       );
       const { sessionId, contactId } = seedContactSession(db);
-      const execId = engine.startExecution(workflowId, sessionId, contactId, undefined, { plan: "Pro" })!;
+      const execId = await engine.startExecution(workflowId, sessionId, contactId, undefined, { plan: "Pro" })!;
 
       await engine.scheduler.tick();
 
@@ -530,7 +530,7 @@ describe("engine", () => {
       const { sessionId, contactId } = seedContactSession(db);
 
       // 1. Test True branch (score = 80 > 50)
-      const execTrue = engine.startExecution(wfId, sessionId, contactId, undefined, { score: 80 })!;
+      const execTrue = await engine.startExecution(wfId, sessionId, contactId, undefined, { score: 80 })!;
       await engine.scheduler.tick();
 
       expect(sent).toContainEqual({
@@ -543,7 +543,7 @@ describe("engine", () => {
       // 2. Test False branch (score = 20 <= 50)
       clock.advance(5000);
       sent.length = 0;
-      const execFalse = engine.startExecution(wfId, sessionId, contactId, undefined, { score: 20 })!;
+      const execFalse = await engine.startExecution(wfId, sessionId, contactId, undefined, { score: 20 })!;
       await engine.scheduler.tick();
 
       expect(sent).toContainEqual({
@@ -586,7 +586,7 @@ describe("engine", () => {
       const insMsg = db.prepare("INSERT INTO messages (session_id, contact_id, direction, message_type, text, timestamp) VALUES (?, ?, 'in', 'text', 'menu', '2026-08-24T00:00:00Z')").run(sessionId, contactId);
       const msgId = Number(insMsg.lastInsertRowid);
 
-      const execId = engine.handleIncomingMessage(sessionId, contactId, msgId)!;
+      const execId = await engine.handleIncomingMessage(sessionId, contactId, msgId)!;
       expect(execId).not.toBeNull();
 
       // Process outbound menu send
@@ -608,7 +608,7 @@ describe("engine", () => {
       const insReply = db.prepare("INSERT INTO messages (session_id, contact_id, direction, message_type, text, timestamp) VALUES (?, ?, 'in', 'text', '1', '2026-08-24T00:00:05Z')").run(sessionId, contactId);
       const replyMsgId = Number(insReply.lastInsertRowid);
 
-      const advancedId = engine.handleIncomingMessage(sessionId, contactId, replyMsgId);
+      const advancedId = await engine.handleIncomingMessage(sessionId, contactId, replyMsgId);
       expect(advancedId).toBe(execId);
 
       // Process outbound sales response
@@ -647,7 +647,7 @@ describe("engine", () => {
 
       // 1. Inbound trigger "register"
       const insMsg = db.prepare("INSERT INTO messages (session_id, contact_id, direction, message_type, text, timestamp) VALUES (?, ?, 'in', 'text', 'register', '2026-08-24T00:00:00Z')").run(sessionId, contactId);
-      const execId = engine.handleIncomingMessage(sessionId, contactId, Number(insMsg.lastInsertRowid))!;
+      const execId = await engine.handleIncomingMessage(sessionId, contactId, Number(insMsg.lastInsertRowid))!;
 
       // Send prompt
       await engine.scheduler.tick();
@@ -662,7 +662,7 @@ describe("engine", () => {
       clock.advance(5000);
       sent.length = 0;
       const insReply = db.prepare("INSERT INTO messages (session_id, contact_id, direction, message_type, text, timestamp) VALUES (?, ?, 'in', 'text', 'Steven Jossu', '2026-08-24T00:00:05Z')").run(sessionId, contactId);
-      engine.handleIncomingMessage(sessionId, contactId, Number(insReply.lastInsertRowid));
+      await engine.handleIncomingMessage(sessionId, contactId, Number(insReply.lastInsertRowid));
 
       // Process confirmation
       await engine.scheduler.tick();
@@ -702,7 +702,7 @@ describe("engine", () => {
       db.prepare("UPDATE contacts SET name = 'Alice' WHERE id = ?").run(contactId);
       db.prepare("INSERT INTO contact_attributes (contact_id, key, value) VALUES (?, 'tier', 'VIP')").run(contactId);
 
-      engine.startExecution(wfId, sessionId, contactId);
+      await engine.startExecution(wfId, sessionId, contactId);
       await engine.scheduler.tick();
 
       expect(sent.length).toBe(1);
@@ -732,7 +732,7 @@ describe("engine", () => {
 
       // Inbound trigger "quote"
       const insMsg = db.prepare("INSERT INTO messages (session_id, contact_id, direction, message_type, text, timestamp) VALUES (?, ?, 'in', 'text', 'quote', '2026-08-24T00:00:00Z')").run(sessionId, contactId);
-      const execId = engine.handleIncomingMessage(sessionId, contactId, Number(insMsg.lastInsertRowid))!;
+      const execId = await engine.handleIncomingMessage(sessionId, contactId, Number(insMsg.lastInsertRowid))!;
 
       await engine.scheduler.tick();
       expect(sent).toContainEqual({
@@ -780,7 +780,7 @@ describe("engine", () => {
       insEdge.run(wfId, "m", "e");
 
       const { sessionId, contactId } = seedContactSession(db);
-      const execId = engine.startExecution(wfId, sessionId, contactId);
+      const execId = await engine.startExecution(wfId, sessionId, contactId);
 
       await engine.scheduler.tick();
 
@@ -809,7 +809,7 @@ describe("engine", () => {
       const futureIso = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
       db.prepare("UPDATE contacts SET bot_status = 'paused_human', bot_paused_until = ? WHERE id = ?").run(futureIso, contactId);
 
-      const execId = engine.startExecution(wfId, sessionId, contactId);
+      const execId = await engine.startExecution(wfId, sessionId, contactId);
       await engine.scheduler.tick();
 
       // No message should be sent

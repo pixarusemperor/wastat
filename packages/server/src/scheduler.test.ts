@@ -41,8 +41,8 @@ describe("scheduler", () => {
     const a = seedExecution(db, "A");
     const b = seedExecution(db, "B");
 
-    sched.enqueue({ type: "resume", executionId: a.executionId, runAt: new Date(90_000) });
-    sched.enqueue({ type: "send_message", executionId: b.executionId });
+    await sched.enqueue({ type: "resume", executionId: a.executionId, runAt: new Date(90_000) });
+    await sched.enqueue({ type: "send_message", executionId: b.executionId });
 
     await sched.tick();
     expect(sent).toEqual([2]); // B's send ran; A's resume untouched
@@ -59,7 +59,7 @@ describe("scheduler", () => {
     const { executionId } = seedExecution(db, "A");
 
     for (let i = 0; i < 3; i++) {
-      sched.enqueue({ type: "send_message", executionId });
+      await sched.enqueue({ type: "send_message", executionId });
     }
 
     await sched.tick();
@@ -82,8 +82,8 @@ describe("scheduler", () => {
     const a = seedExecution(db, "A");
     const b = seedExecution(db, "B");
 
-    sched.enqueue({ type: "send_message", executionId: a.executionId });
-    sched.enqueue({ type: "send_message", executionId: b.executionId });
+    await sched.enqueue({ type: "send_message", executionId: a.executionId });
+    await sched.enqueue({ type: "send_message", executionId: b.executionId });
 
     await sched.tick();
     expect(sent.length).toBe(2);
@@ -96,7 +96,7 @@ describe("scheduler", () => {
       throw { status: 400 };
     }, clock);
     const { executionId } = seedExecution(db, "A");
-    const jobId = sched.enqueue({ type: "send_message", executionId });
+    const jobId = await sched.enqueue({ type: "send_message", executionId });
 
     await sched.tick();
     expect(db.prepare("SELECT status FROM jobs WHERE id = ?").get(jobId)).toEqual({ status: "failed" });
@@ -115,7 +115,7 @@ describe("scheduler", () => {
       throw { status: 500 };
     }, clock);
     const { executionId } = seedExecution(db, "A");
-    const jobId = sched.enqueue({ type: "send_message", executionId });
+    const jobId = await sched.enqueue({ type: "send_message", executionId });
 
     await sched.tick();
     let job = db.prepare("SELECT * FROM jobs WHERE id = ?").get(jobId) as JobRow;
@@ -168,7 +168,7 @@ describe("scheduler", () => {
     const sched = createScheduler(db, executeJob, clock);
     const { executionId } = seedExecution(db, "A");
 
-    sched.enqueue({ type: "resume", executionId, runAt: new Date(90_000) });
+    await sched.enqueue({ type: "resume", executionId, runAt: new Date(90_000) });
 
     await sched.tick();
     expect(sent.length).toBe(0);

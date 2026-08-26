@@ -194,7 +194,7 @@ export async function runVirtualScenario(
         db.prepare("INSERT INTO workflow_edges (workflow_id, source_key, target_key) VALUES (?, 'trig', 'msg')").run(wfId);
 
         // Start execution
-        const execId = engine.startExecution(wfId, session.id, contact.id, undefined, {});
+        const execId = await engine.startExecution(wfId, session.id, contact.id, undefined, {});
         if (!execId) throw new Error("Could not start workflow execution");
         logs.push(`[Execution] Started execution ID ${execId}`);
 
@@ -232,7 +232,7 @@ export async function runVirtualScenario(
         );
         db.prepare("INSERT INTO workflow_edges (workflow_id, source_key, target_key) VALUES (?, 'trig', 'media_node')").run(wfId);
 
-        const execId = engine.startExecution(wfId, session.id, contact.id);
+        const execId = await engine.startExecution(wfId, session.id, contact.id);
         if (!execId) throw new Error("Could not start execution");
 
         await engine.scheduler.tick();
@@ -270,7 +270,7 @@ export async function runVirtualScenario(
         );
         db.prepare("INSERT INTO workflow_edges (workflow_id, source_key, target_key) VALUES (?, 'trig', 'vid_node')").run(wfId);
 
-        const execId = engine.startExecution(wfId, session.id, contact.id);
+        const execId = await engine.startExecution(wfId, session.id, contact.id);
         if (!execId) throw new Error("Could not start execution");
 
         await engine.scheduler.tick();
@@ -306,7 +306,7 @@ export async function runVirtualScenario(
         );
         db.prepare("INSERT INTO workflow_edges (workflow_id, source_key, target_key) VALUES (?, 'trig', 'audio_node')").run(wfId);
 
-        const execId = engine.startExecution(wfId, session.id, contact.id);
+        const execId = await engine.startExecution(wfId, session.id, contact.id);
         if (!execId) throw new Error("Could not start execution");
 
         await engine.scheduler.tick();
@@ -343,7 +343,7 @@ export async function runVirtualScenario(
         );
         db.prepare("INSERT INTO workflow_edges (workflow_id, source_key, target_key) VALUES (?, 'trig', 'pdf_node')").run(wfId);
 
-        const execId = engine.startExecution(wfId, session.id, contact.id);
+        const execId = await engine.startExecution(wfId, session.id, contact.id);
         if (!execId) throw new Error("Could not start execution");
 
         await engine.scheduler.tick();
@@ -388,7 +388,7 @@ export async function runVirtualScenario(
         db.prepare("INSERT INTO workflow_edges (workflow_id, source_key, target_key) VALUES (?, 'trig', 'menu')").run(wfId);
         db.prepare("INSERT INTO workflow_edges (workflow_id, source_key, target_key, handle) VALUES (?, 'menu', 'sales_reply', 'opt_sales')").run(wfId);
 
-        const execId = engine.startExecution(wfId, session.id, contact.id);
+        const execId = await engine.startExecution(wfId, session.id, contact.id);
         if (!execId) throw new Error("Could not start execution");
 
         clock.advance(10000);
@@ -402,7 +402,7 @@ export async function runVirtualScenario(
           new Date(clock.now()).toISOString(),
         );
 
-        engine.handleIncomingMessage(session.id, contact.id, Number(inMsg.lastInsertRowid));
+        await engine.handleIncomingMessage(session.id, contact.id, Number(inMsg.lastInsertRowid));
         clock.advance(10000);
         await engine.scheduler.tick();
 
@@ -444,7 +444,7 @@ export async function runVirtualScenario(
           new Date(clock.now()).toISOString(),
         );
 
-        const execId = engine.startExecution(wfId, session.id, contact.id, Number(trigMsg.lastInsertRowid));
+        const execId = await engine.startExecution(wfId, session.id, contact.id, Number(trigMsg.lastInsertRowid));
         if (!execId) throw new Error("Could not start execution");
 
         clock.advance(10000);
@@ -482,7 +482,7 @@ export async function runVirtualScenario(
         db.prepare("INSERT INTO workflow_edges (workflow_id, source_key, target_key) VALUES (?, 'trig', 'ask')").run(wfId);
         db.prepare("INSERT INTO workflow_edges (workflow_id, source_key, target_key, handle) VALUES (?, 'ask', 'followup', 'on_silence_2h')").run(wfId);
 
-        const execId = engine.startExecution(wfId, session.id, contact.id);
+        const execId = await engine.startExecution(wfId, session.id, contact.id);
         if (!execId) throw new Error("Could not start execution");
 
         clock.advance(10000);
@@ -543,7 +543,7 @@ export async function runVirtualScenario(
           new Date(clock.now()).toISOString(),
         );
 
-        const execRes = engine.handleIncomingMessage(session.id, contact.id, Number(msgInfo.lastInsertRowid));
+        const execRes = await engine.handleIncomingMessage(session.id, contact.id, Number(msgInfo.lastInsertRowid));
         if (execRes !== null) {
           throw new Error("Automation was not suppressed during 24h human takeover");
         }

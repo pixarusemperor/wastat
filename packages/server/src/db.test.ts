@@ -38,12 +38,12 @@ describe("provider-aware boot (regression: no such table: workflows on Supabase 
     }
   });
 
-  it("applies schema to the fallback SQLite runtime db so boot seeding does not crash", () => {
+  it("applies schema to the fallback SQLite runtime db so boot seeding does not crash", async () => {
     // index.ts fallback for the Supabase provider: dbClient.sqlite is undefined, so the
     // runtime db (openDb of DB_PATH) must be schema-applied before autoSeed runs.
     const db = new Database(":memory:");
     applySqliteSchema(db);
-    expect(() => autoSeedProductionWorkflows(db)).not.toThrow();
+    await expect(autoSeedProductionWorkflows(db)).resolves.not.toThrow();
     const row = db.prepare("SELECT COUNT(*) AS n FROM workflows").get() as { n: number };
     expect(row.n).toBe(1);
     db.close();

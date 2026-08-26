@@ -84,6 +84,23 @@ export async function queryRun(
   return { lastInsertRowid: Number(info.lastInsertRowid) };
 }
 
+/**
+ * Like queryRun but never appends RETURNING — for statements whose target has
+ * no `id` column (e.g. composite-PK tables like experiment_assignments).
+ */
+export async function execRun(
+  db: DbClient,
+  sqlText: string,
+  params: unknown[] = [],
+): Promise<void> {
+  if (db.sql) {
+    await db.sql.unsafe(toPgPlaceholders(sqlText), params as any[]);
+    return;
+  }
+  if (!db.sqlite) throw new Error("execRun: no database provider available");
+  db.sqlite.prepare(sqlText).run(...params);
+}
+
 export interface DbClient {
   provider: DbProviderType;
   sqlite?: BetterSqlite3.Database;
@@ -91,6 +108,63 @@ export interface DbClient {
   supabase?: SupabaseClient;
   exec: (sqlText: string) => Promise<void> | void;
   close: () => Promise<void> | void;
+}
+
+/**
+ * Normalizes either a raw sqlite handle (tests / legacy callers) or a DbClient
+ * into a DbClient. Unported-but-seam-aware modules (engine, scheduler, webhook)
+ * call this so they can run against whichever provider is active.
+ */
+export function toDbClient(db: DbClient | BetterSqlite3.Database): DbClient {
+  if (typeof (db as Partial<DbClient>).provider === "string") return db as DbClient;
+  return {
+    provider: "sqlite",
+    sqlite: db as BetterSqlite3.Database,
+    exec: (q: string) => {
+      (db as BetterSqlite3.Database).exec(q);
+    },
+    close: () => {
+      (db as BetterSqlite3.Database).close();
+    },
+  } as DbClient;
+}
+
+/** Provider-aware `now()` timestamp expression (strftime is SQLite-only). */
+export function tsNowSql(db: DbClient): string {
+  return db.sql ? "now()" : "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
+}
+
+/** Provider-aware FALSE literal (pg BOOLEAN vs sqlite 0/1 INTEGER). */
+export function falseSql(db: DbClient): string {
+  return db.sql ? "false" : "0";
+}
+
+/** Provider-aware TRUE literal (pg BOOLEAN vs sqlite 0/1 INTEGER). */
+export function trueSql(db: DbClient): string {
+  return db.sql ? "true" : "1";
+}
+
+/**
+ * Config/vars/data columns are JSONB on pg (returned pre-parsed) and TEXT on
+ * sqlite (JSON strings). Normalize reads to a plain object.
+ */
+export function jsonFromDb(value: unknown): Record<string, unknown> {
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) ?? {};
+    } catch {
+      return {};
+    }
+  }
+  return (value ?? {}) as Record<string, unknown>;
+}
+
+/**
+ * Serialize a JS value for a JSON-ish column: on pg pass the object through
+ * (postgres.js JSON-stringifies it for JSONB); on sqlite stringify explicitly.
+ */
+export function jsonToDb(db: DbClient, value: unknown): unknown {
+  return db.sql ? (value ?? {}) : JSON.stringify(value ?? {});
 }
 
 /**

@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import type BetterSqlite3 from "better-sqlite3";
 import { type SendMessageInput } from "./engine.js";
 import { type StorageProvider, createStorageFromEnv } from "./media.js";
+import { queryGet, toDbClient, type DbClient } from "./db/client.js";
 
 const WASENDER_API = `${process.env.WASENDER_BASE_URL ?? "https://www.wasenderapi.com/api"}/send-message`;
 
@@ -61,10 +62,11 @@ export async function sendPresenceUpdate(
 }
 
 export function makeWasenderTransport(
-  db?: BetterSqlite3.Database,
+  db?: BetterSqlite3.Database | DbClient,
   storage: StorageProvider = createStorageFromEnv(),
   fetchImpl: typeof fetch = fetch,
 ): (input: SendMessageInput & { apiKey: string }) => Promise<{ providerMessageId: string }> {
+  const dbClient = db ? toDbClient(db) : undefined;
   return async (input) => {
     let payload: Record<string, unknown> = { to: input.toPhone };
 
@@ -74,10 +76,12 @@ export function makeWasenderTransport(
       let fileName = input.filename;
       const mediaType = input.mediaType;
 
-      if (input.mediaId && db) {
-        const asset = db
-          .prepare("SELECT filename, mime_type, r2_key FROM media_assets WHERE id = ?")
-          .get(input.mediaId) as { filename: string; mime_type: string; r2_key: string } | undefined;
+      if (input.mediaId && dbClient) {
+        const asset = (await queryGet(
+          dbClient,
+          "SELECT filename, mime_type, r2_key FROM media_assets WHERE id = ?",
+          [input.mediaId],
+        )) as { filename: string; mime_type: string; r2_key: string } | undefined;
 
         if (asset) {
           publicUrl = storage.getPublicUrl(asset.r2_key);

@@ -1,4 +1,12 @@
 import type BetterSqlite3 from "better-sqlite3";
+import {
+  queryAll,
+  queryGet,
+  queryRun,
+  toDbClient,
+  jsonToDb,
+  type DbClient,
+} from "./db/client.js";
 
 // PRD §14: time must be injectable so tests never sleep through delays.
 export interface Clock {
@@ -66,19 +74,25 @@ export interface Scheduler {
   /** Process all due jobs once. Safe to call concurrently; calls coalesce. */
   tick(): Promise<void>;
   /** Insert a job and wake the scheduler immediately. Returns the job id. */
-  enqueue(input: EnqueueInput): number;
+  enqueue(input: EnqueueInput): Promise<number>;
 }
 
 /**
  * Single global worker over the unified `jobs` table (ADR 0001).
  * Workflow executions stay independent (PRD §22); only outbound sends are
  * serialized per session by the rate limiter (PRD §24–25).
+ *
+ * Provider-aware: runs against whichever DbClient is active (Postgres on
+ * Supabase, SQLite in tests/dev).
  */
 export function createScheduler(
-  db: BetterSqlite3.Database,
+  db: DbClient | BetterSqlite3.Database,
   executeJob: JobExecutor,
   clock: Clock = realClock,
 ): Scheduler {
+  const dbClient = toDbClient(db);
+  const isPg = Boolean(dbClient.sql);
+
   // ponytail: in-memory limiter resets on restart — worst case one early send
   // per session right after a restart; acceptable for a safety policy, not an SLA.
   const nextSendAt = new Map<number, number>();
@@ -88,54 +102,59 @@ export function createScheduler(
 
   const iso = (ms: number) => new Date(ms).toISOString();
 
-  const selectDue = db.prepare(`
+  const SELECT_DUE = `
     SELECT j.*, we.session_id
     FROM jobs j JOIN workflow_executions we ON we.id = j.execution_id
     WHERE j.status = 'pending' AND j.run_at <= ?
     ORDER BY j.run_at
     LIMIT 50
-  `);
-  const bumpAttempts = db.prepare("UPDATE jobs SET attempts = attempts + 1 WHERE id = ?");
-  const markDone = db.prepare("UPDATE jobs SET status = 'done' WHERE id = ?");
-  const deferTo = db.prepare("UPDATE jobs SET run_at = ? WHERE id = ?");
-  const failJob = db.prepare("UPDATE jobs SET status = 'failed', last_error = ? WHERE id = ?");
-  const failExecution = db.prepare(
-    "UPDATE workflow_executions SET status = 'failed', finished_at = ? WHERE id = ?",
-  );
-  const backoffJob = db.prepare("UPDATE jobs SET run_at = ?, last_error = ? WHERE id = ?");
-  const logEvent = db.prepare(
-    "INSERT INTO events (event_type, execution_id, data) VALUES ('job.failed', ?, ?)",
-  );
+  `;
 
   async function dispatch(job: JobRow): Promise<void> {
-    bumpAttempts.run(job.id);
+    await queryRun(dbClient, "UPDATE jobs SET attempts = attempts + 1 WHERE id = ?", [job.id]);
     try {
       await executeJob(job);
-      markDone.run(job.id);
+      await queryRun(dbClient, "UPDATE jobs SET status = 'done' WHERE id = ?", [job.id]);
     } catch (err) {
       const cls = classifyError(err);
-      const attempts = job.attempts + 1;
+      // BIGINT columns come back as strings from postgres.js — coerce before math.
+      const attempts = Number(job.attempts) + 1;
       if (cls === "non-retryable" || attempts >= MAX_ATTEMPTS) {
-        failJob.run(String(err), job.id);
-        failExecution.run(iso(clock.now()), job.execution_id);
-        logEvent.run(job.execution_id, JSON.stringify({ job_id: job.id, error: String(err), class: cls }));
+        await queryRun(dbClient, "UPDATE jobs SET status = 'failed', last_error = ? WHERE id = ?", [
+          String(err),
+          job.id,
+        ]);
+        await queryRun(
+          dbClient,
+          "UPDATE workflow_executions SET status = 'failed', finished_at = ? WHERE id = ?",
+          [iso(clock.now()), job.execution_id],
+        );
+        await queryRun(
+          dbClient,
+          "INSERT INTO events (event_type, execution_id, data) VALUES ('job.failed', ?, ?)",
+          [job.execution_id, jsonToDb(dbClient, { job_id: job.id, error: String(err), class: cls })],
+        );
       } else {
         // retryable and unknown both retry — unknown capped by MAX_ATTEMPTS
         const backoff = BASE_BACKOFF_MS * 2 ** (attempts - 1); // 30s, 60s
-        backoffJob.run(iso(clock.now() + backoff), String(err), job.id);
+        await queryRun(dbClient, "UPDATE jobs SET run_at = ?, last_error = ? WHERE id = ?", [
+          iso(clock.now() + backoff),
+          String(err),
+          job.id,
+        ]);
       }
     }
   }
 
   async function runPass(): Promise<void> {
-    const due = selectDue.all(iso(clock.now())) as JobRow[];
+    const due = (await queryAll(dbClient, SELECT_DUE, [iso(clock.now())])) as unknown as JobRow[];
     for (const job of due) {
       if (job.type === "send_message") {
         // Reserve the session's next free slot; later same-session jobs in this
         // batch see the moved slot and defer behind it (keeps strict ≥5s spacing).
         const slot = Math.max(clock.now(), nextSendAt.get(job.session_id) ?? 0);
         if (clock.now() < slot) {
-          deferTo.run(iso(slot), job.id);
+          await queryRun(dbClient, "UPDATE jobs SET run_at = ? WHERE id = ?", [iso(slot), job.id]);
           continue;
         }
         nextSendAt.set(job.session_id, slot + MIN_SEND_INTERVAL_MS);
@@ -153,18 +172,20 @@ export function createScheduler(
     return pass;
   }
 
-  function enqueue(input: EnqueueInput): number {
-    const info = db
-      .prepare("INSERT INTO jobs (type, execution_id, node_key, payload, run_at) VALUES (?, ?, ?, ?, ?)")
-      .run(
+  async function enqueue(input: EnqueueInput): Promise<number> {
+    const info = await queryRun(
+      dbClient,
+      "INSERT INTO jobs (type, execution_id, node_key, payload, run_at) VALUES (?, ?, ?, ?, ?)",
+      [
         input.type,
         input.executionId,
         input.nodeKey ?? null,
-        JSON.stringify(input.payload ?? {}),
+        jsonToDb(dbClient, input.payload ?? {}),
         iso(input.runAt?.getTime() ?? clock.now()),
-      );
+      ],
+    );
     void tick(); // due-now work starts immediately; the poller covers the rest
-    return Number(info.lastInsertRowid);
+    return info.lastInsertRowid ?? 0;
   }
 
   return { tick, enqueue };
