@@ -6,6 +6,7 @@ import {
   type ExperimentFunnel,
   type ExperimentStats,
   type ExperimentSummary,
+  type ExperimentTriggerConfig,
   type WorkflowSummary,
 } from "./api.js";
 import { Dialog, StatusPill } from "./ui.js";
@@ -64,7 +65,7 @@ export function ExperimentsPage({
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<ExperimentSummary | null>(null);
-  const [editing, setEditing] = useState<ExperimentSummary | null>(null);
+  const [editing, setEditing] = useState<(ExperimentSummary & ExperimentTriggerConfig) | null>(null);
 
   // Selected experiment details & stats
   const [activeExp, setActiveExp] = useState<ExperimentDetails | null>(null);
@@ -141,28 +142,13 @@ export function ExperimentsPage({
     }
   }
 
-  async function detachWorkflow(workflowId: number) {
-    try {
-      const wf = await api.getWorkflow(String(workflowId));
-      await api.saveWorkflow(String(workflowId), {
-        name: wf.name,
-        description: wf.description,
-        active: wf.active,
-        experimentId: null,
-        nodes: wf.nodes,
-        edges: wf.edges,
-      });
-      await refresh();
-    } catch (e) {
-      setError(String(e));
-    }
-  }
-
   async function createNewVariant(expId: number) {
     const variantLetter = String.fromCharCode(65 + (activeExp?.workflows.length ?? 0));
     const name = `${activeExp?.name || "Experiment"} - Variant ${variantLetter}`;
-    const created = await api.createWorkflow(name, expId);
-    onOpenWorkflow(String(created.id));
+    // Option C: variants are trigger-less presentation workflows — the
+    // experiment owns the shared trigger, so no trigger node is created.
+    const created = await api.addExperimentVariant(expId, { name });
+    onOpenWorkflow(String(created.workflowId));
   }
 
   const unassignedWorkflows = allWorkflows.filter(
@@ -261,9 +247,17 @@ export function ExperimentsPage({
                       </button>
                       <button
                         className="btn btn-ghost btn-sm"
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.stopPropagation();
-                          setEditing(exp);
+                          const details = await api.getExperiment(exp.id);
+                          setEditing({
+                            ...exp,
+                            triggerKeywords: details.triggerKeywords,
+                            triggerAlgorithm: details.triggerAlgorithm,
+                            triggerThreshold: details.triggerThreshold,
+                            sessionId: details.sessionId,
+                            distributionMode: details.distributionMode,
+                          });
                         }}
                       >
                         Edit
@@ -396,8 +390,13 @@ export function ExperimentsPage({
                         {zTest?.isSignificant && (
                           <button
                             className="btn btn-sm btn-primary"
-                            onClick={() => {
-                              alert(`Adopted ${best.name} as the 100% winner! Traffic has been shifted.`);
+                            onClick={async () => {
+                              try {
+                                await api.adoptWinner(activeExp.id, best.workflowId);
+                                await loadExperimentDetails(activeExp.id);
+                              } catch (e) {
+                                setError(String(e));
+                              }
                             }}
                           >
                             🚀 Adopt Winner (100% Traffic)
@@ -429,6 +428,7 @@ export function ExperimentsPage({
                           <tr>
                             <th>Variant</th>
                             <th>Status</th>
+                            <th>Weight %</th>
                             <th>Assigned</th>
                             <th>Messaged</th>
                             <th>Replied</th>
@@ -458,18 +458,35 @@ export function ExperimentsPage({
                                   <button
                                     type="button"
                                     onClick={async () => {
-                                      const current = await api.getWorkflow(String(v.workflowId));
-                                      await api.saveWorkflow(String(v.workflowId), {
-                                        ...current,
-                                        active: v.active === 1 ? 0 : 1,
+                                      // Soft pause: experiment_variants.active only —
+                                      // existing assignments keep their variant.
+                                      await api.updateExperimentVariant(activeExp.id, v.workflowId, {
+                                        active: v.active === 1 ? false : true,
                                       });
-                                      await refresh();
+                                      await loadExperimentDetails(activeExp.id);
                                     }}
                                     style={{ background: "transparent", border: "none", cursor: "pointer", padding: 0 }}
-                                    title="Click to toggle variant live/draft status"
+                                    title="Click to soft-pause/activate this variant"
                                   >
                                     <StatusPill active={v.active === 1} />
                                   </button>
+                                </td>
+                                <td>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={100}
+                                    className="input"
+                                    style={{ width: "4.5rem", padding: "0.25rem 0.4rem" }}
+                                    value={v.weight}
+                                    onChange={async (e) => {
+                                      const w = Number(e.target.value);
+                                      if (!Number.isFinite(w) || w < 0 || w > 100) return;
+                                      await api.updateExperimentVariant(activeExp.id, v.workflowId, { weight: w });
+                                      await loadExperimentDetails(activeExp.id);
+                                    }}
+                                    title="Share of new traffic when distribution is weighted"
+                                  />
                                 </td>
                                 <td>{v.assigned}</td>
                                 <td>{v.messaged}</td>
@@ -488,10 +505,14 @@ export function ExperimentsPage({
                                 <td>
                                   <button
                                     className="btn btn-ghost btn-danger btn-sm"
-                                    title="Detach variant from experiment"
-                                    onClick={() => void detachWorkflow(v.workflowId)}
+                                    title="Remove variant from experiment (workflow is kept, unlinked)"
+                                    onClick={async () => {
+                                      if (!window.confirm(`Remove “${v.name}” from this experiment?`)) return;
+                                      await api.deleteExperimentVariant(activeExp.id, v.workflowId);
+                                      await loadExperimentDetails(activeExp.id);
+                                    }}
                                   >
-                                    Detach
+                                    Remove
                                   </button>
                                 </td>
                               </tr>
@@ -734,14 +755,26 @@ function ExperimentForm({
   onSubmit,
 }: {
   title: string;
-  initialData?: { name: string; description: string; active: boolean };
+  initialData?: { name: string; description: string; active: boolean } & ExperimentTriggerConfig;
   submitLabel: string;
   onCancel: () => void;
-  onSubmit: (data: { name: string; description?: string; active?: boolean }) => Promise<void>;
+  onSubmit: (data: { name: string; description?: string; active?: boolean } & ExperimentTriggerConfig) => Promise<void>;
 }) {
   const [name, setName] = useState(initialData?.name ?? "");
   const [description, setDescription] = useState(initialData?.description ?? "");
   const [active, setActive] = useState(initialData?.active ?? true);
+  const [triggerKeywords, setTriggerKeywords] = useState(
+    initialData?.triggerKeywords?.join(", ") ?? "",
+  );
+  const [triggerAlgorithm, setTriggerAlgorithm] = useState(
+    initialData?.triggerAlgorithm ?? "exact",
+  );
+  const [triggerThreshold, setTriggerThreshold] = useState(
+    initialData?.triggerThreshold ?? 100,
+  );
+  const [distributionMode, setDistributionMode] = useState(
+    initialData?.distributionMode ?? "balanced",
+  );
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -755,7 +788,19 @@ function ExperimentForm({
     if (!trimmed || busy) return;
     setBusy(true);
     try {
-      await onSubmit({ name: trimmed, description: description.trim() || undefined, active });
+      const keywords = triggerKeywords
+        .split(",")
+        .map((k) => k.trim())
+        .filter(Boolean);
+      await onSubmit({
+        name: trimmed,
+        description: description.trim() || undefined,
+        active,
+        triggerKeywords: keywords.length > 0 ? keywords : undefined,
+        triggerAlgorithm,
+        triggerThreshold,
+        distributionMode,
+      });
     } finally {
       setBusy(false);
     }
@@ -798,6 +843,69 @@ function ExperimentForm({
           <span className="switch-track" aria-hidden />
           <span className="switch-label">{active ? "Active" : "Paused"}</span>
         </label>
+      </div>
+
+      <div style={{ marginTop: "1rem" }}>
+        <label className="field-label" htmlFor="exp-form-trigger">
+          Trigger keywords (comma-separated)
+        </label>
+        <input
+          id="exp-form-trigger"
+          className="input"
+          placeholder="e.g. price, offer, VIP2026"
+          value={triggerKeywords}
+          onChange={(e) => setTriggerKeywords(e.target.value)}
+        />
+        <p className="page-subtitle" style={{ margin: "0.25rem 0 0", fontSize: "0.75rem" }}>
+          The experiment owns the trigger — every variant shares it (no per-variant drift).
+        </p>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginTop: "1rem" }}>
+        <div>
+          <label className="field-label" htmlFor="exp-form-algo">
+            Match algorithm
+          </label>
+          <select
+            id="exp-form-algo"
+            className="input"
+            value={triggerAlgorithm}
+            onChange={(e) => setTriggerAlgorithm(e.target.value)}
+          >
+            <option value="exact">exact</option>
+            <option value="dice">dice (similarity)</option>
+            <option value="levenshtein">levenshtein</option>
+          </select>
+        </div>
+        <div>
+          <label className="field-label" htmlFor="exp-form-threshold">
+            Threshold (0–100)
+          </label>
+          <input
+            id="exp-form-threshold"
+            className="input"
+            type="number"
+            min={0}
+            max={100}
+            value={triggerThreshold}
+            onChange={(e) => setTriggerThreshold(Number(e.target.value))}
+          />
+        </div>
+      </div>
+
+      <div style={{ marginTop: "1rem" }}>
+        <label className="field-label" htmlFor="exp-form-dist">
+          Distribution
+        </label>
+        <select
+          id="exp-form-dist"
+          className="input"
+          value={distributionMode}
+          onChange={(e) => setDistributionMode(e.target.value)}
+        >
+          <option value="balanced">Balanced — each active variant gets an equal share</option>
+          <option value="weighted">Weighted — follow each variant’s weight %</option>
+        </select>
       </div>
       <div className="modal-actions">
         <button type="button" className="btn" onClick={onCancel}>

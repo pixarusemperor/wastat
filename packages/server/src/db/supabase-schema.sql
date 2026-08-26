@@ -74,14 +74,37 @@ CREATE TABLE IF NOT EXISTS media_assets (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 8. Experiments (A/B Test Buckets)
+-- 8. Experiments (A/B Test Buckets) — Option C: the experiment owns the
+-- shared trigger + distribution; variants are presentation workflows.
 CREATE TABLE IF NOT EXISTS experiments (
-  id          BIGSERIAL PRIMARY KEY,
-  name        TEXT NOT NULL,
-  description TEXT,
-  active      BOOLEAN NOT NULL DEFAULT true,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+  id                 BIGSERIAL PRIMARY KEY,
+  name               TEXT NOT NULL,
+  description        TEXT,
+  active             BOOLEAN NOT NULL DEFAULT true,
+  trigger_keywords   TEXT[],                        -- phrases/keywords for the shared trigger
+  trigger_algorithm  TEXT NOT NULL DEFAULT 'dice',  -- dice | exact | levenshtein
+  trigger_threshold  REAL NOT NULL DEFAULT 75,
+  session_id         BIGINT REFERENCES sessions(id) ON DELETE SET NULL,
+  distribution_mode  TEXT NOT NULL DEFAULT 'balanced', -- balanced | weighted
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- 8b. Experiment Variants (A/B presentations): weight + per-variant on/off.
+CREATE TABLE IF NOT EXISTS experiment_variants (
+  experiment_id BIGINT NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+  workflow_id   BIGINT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+  weight        REAL NOT NULL DEFAULT 100,
+  active        BOOLEAN NOT NULL DEFAULT true,
+  PRIMARY KEY (experiment_id, workflow_id)
+);
+
+-- 8c. Idempotent ALTERs for pre-existing experiments tables (Option C trigger
+-- columns). Safe to run on every boot — no-ops once the columns exist.
+ALTER TABLE experiments ADD COLUMN IF NOT EXISTS trigger_keywords  TEXT[];
+ALTER TABLE experiments ADD COLUMN IF NOT EXISTS trigger_algorithm TEXT NOT NULL DEFAULT 'dice';
+ALTER TABLE experiments ADD COLUMN IF NOT EXISTS trigger_threshold REAL NOT NULL DEFAULT 75;
+ALTER TABLE experiments ADD COLUMN IF NOT EXISTS session_id       BIGINT REFERENCES sessions(id) ON DELETE SET NULL;
+ALTER TABLE experiments ADD COLUMN IF NOT EXISTS distribution_mode TEXT NOT NULL DEFAULT 'balanced';
 
 -- 9. Workflows (Visual Graph Automations)
 CREATE TABLE IF NOT EXISTS workflows (

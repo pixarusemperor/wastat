@@ -66,11 +66,16 @@ CREATE TABLE IF NOT EXISTS media_assets (
 );
 
 CREATE TABLE IF NOT EXISTS experiments (
-  id          INTEGER PRIMARY KEY,
-  name        TEXT NOT NULL,
-  description TEXT,
-  active      INTEGER NOT NULL DEFAULT 1,
-  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  id                 INTEGER PRIMARY KEY,
+  name               TEXT NOT NULL,
+  description        TEXT,
+  active             INTEGER NOT NULL DEFAULT 1,
+  trigger_keywords   TEXT,                          -- JSON array of phrases/keywords
+  trigger_algorithm  TEXT NOT NULL DEFAULT 'dice',  -- dice | exact | levenshtein
+  trigger_threshold  REAL NOT NULL DEFAULT 75,
+  session_id         INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+  distribution_mode  TEXT NOT NULL DEFAULT 'balanced', -- balanced | weighted
+  created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 -- A variant IS a workflow (PRD 29): workflows.experiment_id links them.
@@ -87,6 +92,16 @@ CREATE TABLE IF NOT EXISTS workflows (
 );
 
 CREATE INDEX IF NOT EXISTS idx_workflows_session ON workflows (session_id, active);
+
+-- A/B Option C: the experiment owns the shared trigger; a variant is a
+-- presentation workflow (no trigger node of its own) with a weight + on/off.
+CREATE TABLE IF NOT EXISTS experiment_variants (
+  experiment_id INTEGER NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+  workflow_id   INTEGER NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+  weight        REAL NOT NULL DEFAULT 100,
+  active        INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (experiment_id, workflow_id)
+);
 
 CREATE TABLE IF NOT EXISTS workflow_nodes (
   id          INTEGER PRIMARY KEY,

@@ -6,7 +6,7 @@ import { FakeClock } from "./scheduler.js";
 
 const schema = readFileSync(new URL("./db/schema.sql", import.meta.url), "utf8");
 
-function setup() {
+function setup(opts?: { rng?: () => number }) {
   const db = new Database(":memory:");
   db.pragma("foreign_keys = ON");
   db.exec(schema);
@@ -14,6 +14,7 @@ function setup() {
   const sent: Array<{ toPhone: string; text?: string; kind: string }> = [];
   const engine = createEngine(db, {
     clock,
+    rng: opts?.rng,
     sendMessage: async (input) => {
       sent.push(input);
       return { providerMessageId: `prov-${sent.length}` };
@@ -436,6 +437,141 @@ describe("engine", () => {
       expect(await engine.handleIncomingMessage(sessionId, contactId, messageId)).toBeNull();
     });
 
+    it("distributes weighted variants by percentage using the injected rng, sticky wins", async () => {
+      // Weights 25/75. rng() < 0.25 → variant A, else → variant B.
+      let nextRng = 0.5;
+      const { db, engine } = setup({ rng: () => nextRng });
+      const expInfo = db
+        .prepare(
+          "INSERT INTO experiments (name, active, trigger_keywords, trigger_algorithm, trigger_threshold, distribution_mode) VALUES ('W A/B', 1, ?, 'exact', 100, 'weighted')",
+        )
+        .run(JSON.stringify(["price"]));
+      const expId = Number(expInfo.lastInsertRowid);
+
+      const mkVariant = () => {
+        const wf = db
+          .prepare("INSERT INTO workflows (name, active, experiment_id) VALUES ('v', 1, ?)")
+          .run(expId);
+        const id = Number(wf.lastInsertRowid);
+        const insNode = db.prepare("INSERT INTO workflow_nodes (workflow_id, node_key, type, config) VALUES (?, ?, ?, ?)");
+        insNode.run(id, "t", "trigger", "{}");
+        insNode.run(id, "e", "end", "{}");
+        const insEdge = db.prepare("INSERT INTO workflow_edges (workflow_id, source_key, target_key) VALUES (?, ?, ?)");
+        insEdge.run(id, "t", "e");
+        return id;
+      };
+      const vA = mkVariant();
+      const vB = mkVariant();
+      db.prepare("INSERT INTO experiment_variants (experiment_id, workflow_id, weight, active) VALUES (?, ?, 25, 1)").run(expId, vA);
+      db.prepare("INSERT INTO experiment_variants (experiment_id, workflow_id, weight, active) VALUES (?, ?, 75, 1)").run(expId, vB);
+
+      const wfOf = (eid: number) =>
+        (db.prepare("SELECT workflow_id FROM workflow_executions WHERE id = ?").get(eid) as any).workflow_id;
+
+      // rng=0.5 → falls in B's 75% band.
+      nextRng = 0.5;
+      const a = seedIncoming(db, "price");
+      const eA = (await engine.handleIncomingMessage(a.sessionId, a.contactId, a.messageId))!;
+      expect(wfOf(eA)).toBe(vB);
+
+      // rng=0.1 → A's 25% band.
+      nextRng = 0.1;
+      const b = seedIncoming(db, "price");
+      const eB = (await engine.handleIncomingMessage(b.sessionId, b.contactId, b.messageId))!;
+      expect(wfOf(eB)).toBe(vA);
+
+      // Sticky: the SAME contact messages again → stays on B regardless of rng.
+      const m2 = db
+        .prepare(
+          "INSERT INTO messages (session_id, contact_id, direction, message_type, text, timestamp) VALUES (?, ?, 'in', 'text', 'price again', '2026-01-01T00:01:00Z')",
+        )
+        .run(a.sessionId, a.contactId);
+      nextRng = 0.05;
+      const eA2 = (await engine.handleIncomingMessage(a.sessionId, a.contactId, Number(m2.lastInsertRowid)))!;
+      expect(wfOf(eA2)).toBe(vB);
+    });
+
+    it("matches an experiment's shared trigger (Option C) and starts a variant presentation", async () => {
+      const { db, engine, sent } = setup();
+      // The experiment OWNS the trigger: keyword "price". Variants are
+      // presentation workflows whose own nodes contain NO matching keyword —
+      // only the experiment's trigger can route here.
+      const expInfo = db
+        .prepare(
+          "INSERT INTO experiments (name, active, trigger_keywords, trigger_algorithm, trigger_threshold, distribution_mode) VALUES ('Price A/B', 1, ?, 'exact', 100, 'balanced')",
+        )
+        .run(JSON.stringify(["price"]));
+      const expId = Number(expInfo.lastInsertRowid);
+
+      const mkVariant = () => {
+        const wf = db
+          .prepare("INSERT INTO workflows (name, active, experiment_id) VALUES ('v', 1, ?)")
+          .run(expId);
+        const id = Number(wf.lastInsertRowid);
+        const insNode = db.prepare("INSERT INTO workflow_nodes (workflow_id, node_key, type, config) VALUES (?, ?, ?, ?)");
+        insNode.run(id, "t", "trigger", "{}");
+        insNode.run(id, "s", "send_text", JSON.stringify({ text: "presentation-" + id }));
+        insNode.run(id, "e", "end", "{}");
+        const insEdge = db.prepare("INSERT INTO workflow_edges (workflow_id, source_key, target_key) VALUES (?, ?, ?)");
+        insEdge.run(id, "t", "s");
+        insEdge.run(id, "s", "e");
+        db.prepare("INSERT INTO experiment_variants (experiment_id, workflow_id, weight, active) VALUES (?, ?, 100, 1)").run(expId, id);
+        return id;
+      };
+      const v1 = mkVariant();
+      const v2 = mkVariant();
+
+      const { sessionId, contactId, messageId } = seedIncoming(db, "price");
+      const execId = await engine.handleIncomingMessage(sessionId, contactId, messageId);
+      expect(execId).not.toBeNull();
+
+      const row = db
+        .prepare("SELECT workflow_id FROM workflow_executions WHERE id = ?")
+        .get(execId!) as { workflow_id: number };
+      expect([v1, v2]).toContain(Number(row.workflow_id));
+
+      // Sticky assignment recorded against the experiment.
+      const assign = db
+        .prepare("SELECT workflow_id FROM experiment_assignments WHERE experiment_id = ? AND contact_id = ?")
+        .get(expId, contactId) as { workflow_id: number } | undefined;
+      expect(assign).toBeTruthy();
+      expect(Number(assign!.workflow_id)).toBe(Number(row.workflow_id));
+
+      // The variant's own graph has no keyword — the send proves the
+      // experiment's trigger routed the inbound message (sends flow through
+      // the scheduler queue, so tick it first).
+      await engine.scheduler.tick();
+      expect(sent[0]?.text).toBe("presentation-" + Number(row.workflow_id));
+    });
+
+    it("starts a trigger-less presentation workflow at its first node (skipTrigger)", async () => {
+      const { db, engine, sent } = setup();
+      // Option C target model: the variant workflow has NO trigger node —
+      // the graph starts directly at the first send node.
+      const expInfo = db
+        .prepare(
+          "INSERT INTO experiments (name, active, trigger_keywords, trigger_algorithm, trigger_threshold, distribution_mode) VALUES ('Trigless', 1, ?, 'exact', 100, 'balanced')",
+        )
+        .run(JSON.stringify(["start"]));
+      const expId = Number(expInfo.lastInsertRowid);
+
+      const wf = db.prepare("INSERT INTO workflows (name, active, experiment_id) VALUES ('pres', 1, ?)").run(expId);
+      const wfId = Number(wf.lastInsertRowid);
+      const insNode = db.prepare("INSERT INTO workflow_nodes (workflow_id, node_key, type, config) VALUES (?, ?, ?, ?)");
+      insNode.run(wfId, "s", "send_text", JSON.stringify({ text: "hello-no-trigger" }));
+      insNode.run(wfId, "e", "end", "{}");
+      const insEdge = db.prepare("INSERT INTO workflow_edges (workflow_id, source_key, target_key) VALUES (?, ?, ?)");
+      insEdge.run(wfId, "s", "e");
+      db.prepare("INSERT INTO experiment_variants (experiment_id, workflow_id, weight, active) VALUES (?, ?, 100, 1)").run(expId, wfId);
+
+      const { sessionId, contactId, messageId } = seedIncoming(db, "start");
+      const execId = await engine.handleIncomingMessage(sessionId, contactId, messageId)!;
+      expect(execId).not.toBeNull();
+
+      await engine.scheduler.tick();
+      expect(sent[0]?.text).toBe("hello-no-trigger");
+    });
+
     it("distributes experiment variants equally and sticks assignments", async () => {
       const { db, engine } = setup();
       // three variants of ONE experiment, identical keywords
@@ -471,9 +607,13 @@ describe("engine", () => {
       // equal distribution: each variant got exactly one contact (ties -> lowest id)
       expect([wfOf(eA), wfOf(eB), wfOf(eC)].sort((x, y) => x - y)).toEqual([v1, v2, v3].sort((x, y) => x - y));
 
-      // sticky: contact A messages again -> lands on their original variant
-      const a2 = seedIncoming(db, "price");
-      const eA2 = (await engine.handleIncomingMessage(a2.sessionId, a2.contactId, a2.messageId))!;
+      // sticky: the SAME contact A messages again -> stays on their original variant
+      const m2 = db
+        .prepare(
+          "INSERT INTO messages (session_id, contact_id, direction, message_type, text, timestamp) VALUES (?, ?, 'in', 'text', 'price again', '2026-01-01T00:01:00Z')",
+        )
+        .run(a.sessionId, a.contactId);
+      const eA2 = (await engine.handleIncomingMessage(a.sessionId, a.contactId, Number(m2.lastInsertRowid)))!;
       expect(wfOf(eA2)).toBe(wfOf(eA));
     });
   });

@@ -49,3 +49,57 @@ describe("provider-aware boot (regression: no such table: workflows on Supabase 
     db.close();
   });
 });
+
+describe("A/B Option C schema (experiment owns trigger + experiment_variants)", () => {
+  it("exposes experiment trigger columns + experiment_variants table after schema apply", () => {
+    const db = new Database(":memory:");
+    applySqliteSchema(db);
+
+    const expCols = db.prepare("PRAGMA table_info(experiments)").all() as Array<{ name: string }>;
+    const names = expCols.map((c) => c.name);
+    for (const col of [
+      "trigger_keywords",
+      "trigger_algorithm",
+      "trigger_threshold",
+      "session_id",
+      "distribution_mode",
+    ]) {
+      expect(names).toContain(col);
+    }
+
+    const variantsTable = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='experiment_variants'")
+      .get();
+    expect(variantsTable).toBeTruthy();
+    const variantCols = db.prepare("PRAGMA table_info(experiment_variants)").all() as Array<{ name: string }>;
+    expect(variantCols.map((c) => c.name).sort()).toEqual(
+      ["experiment_id", "workflow_id", "weight", "active"].sort(),
+    );
+    db.close();
+  });
+
+  it("backfills experiment_variants from existing workflows.experiment_id idempotently", async () => {
+    const db = new Database(":memory:");
+    applySqliteSchema(db);
+    const { backfillExperimentVariants } = await import("./db/ab-migration.js");
+
+    db.prepare("INSERT INTO sessions (name, provider_session_id) VALUES ('S', 'ps')").run();
+    const expInfo = db.prepare("INSERT INTO experiments (name, active) VALUES ('exp', 1)").run();
+    const wfInfo = db
+      .prepare("INSERT INTO workflows (name, active, session_id, experiment_id) VALUES ('v1', 1, 1, ?)")
+      .run(expInfo.lastInsertRowid);
+
+    await backfillExperimentVariants(db);
+    let rows = db
+      .prepare("SELECT experiment_id, workflow_id, weight, active FROM experiment_variants")
+      .all() as Array<{ experiment_id: number; workflow_id: number; weight: number; active: number }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ weight: 100, active: 1 });
+
+    // Idempotent: running again must not duplicate rows.
+    await backfillExperimentVariants(db);
+    rows = db.prepare("SELECT experiment_id, workflow_id FROM experiment_variants").all() as any[];
+    expect(rows).toHaveLength(1);
+    db.close();
+  });
+});

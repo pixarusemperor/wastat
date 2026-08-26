@@ -51,12 +51,25 @@ export interface ExperimentSummary {
   totalAssigned: number;
 }
 
+export interface ExperimentTriggerConfig {
+  triggerKeywords?: string[] | null;
+  triggerAlgorithm?: string;
+  triggerThreshold?: number;
+  sessionId?: number | null;
+  distributionMode?: string;
+}
+
 export interface ExperimentDetails {
   id: number;
   name: string;
   description: string | null;
   active: number;
   createdAt: string;
+  triggerKeywords?: string[] | null;
+  triggerAlgorithm?: string;
+  triggerThreshold?: number;
+  sessionId?: number | null;
+  distributionMode?: string;
   workflows: WorkflowSummary[];
 }
 
@@ -64,6 +77,7 @@ export interface VariantStat {
   workflowId: number;
   name: string;
   active: number;
+  weight: number;
   assigned: number;
   messaged: number;
   replied: number;
@@ -204,6 +218,34 @@ export const api = {
     fetch(`/api/experiments/${id}/stats`).then((r) => json<ExperimentStats>(r)),
   getExperimentFunnel: (id: string | number) =>
     fetch(`/api/experiments/${id}/funnel`).then((r) => json<ExperimentFunnel>(r)),
+  addExperimentVariant: (id: string | number, data: { name: string; weight?: number }) =>
+    fetch(`/api/experiments/${id}/variants`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }).then((r) => json<{ workflowId: number; name: string; weight: number }>(r)),
+  updateExperimentVariant: (
+    id: string | number,
+    workflowId: number,
+    data: { weight?: number; active?: boolean },
+  ) =>
+    fetch(`/api/experiments/${id}/variants/${workflowId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }).then((r) => json<{ ok: boolean }>(r)),
+  deleteExperimentVariant: (id: string | number, workflowId: number) =>
+    fetch(`/api/experiments/${id}/variants/${workflowId}`, { method: "DELETE" }).then((r) =>
+      json<{ ok: boolean }>(r),
+    ),
+  adoptWinner: (id: string | number, workflowId: number) =>
+    fetch(`/api/experiments/${id}/adopt-winner`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workflowId }),
+    }).then((r) =>
+      json<{ ok: boolean; winnerWorkflowId: number; distributionMode: string }>(r),
+    ),
 
   listSessions: () =>
     fetch("/api/sessions").then((r) =>

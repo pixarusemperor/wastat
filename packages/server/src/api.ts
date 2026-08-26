@@ -2,9 +2,9 @@ import type { FastifyInstance } from "fastify";
 import Database from "better-sqlite3";
 import type BetterSqlite3 from "better-sqlite3";
 import { makeWasenderAdmin, upsertSession } from "./wasender-admin.js";
-import { queryAll, queryGet, queryRun, execRun, jsonFromDb, jsonToDb, trueSql, applySqliteSchema, type DbClient } from "./db/client.js";
+import { queryAll, queryGet, queryRun, execRun, jsonFromDb, jsonToDb, trueSql, falseSql, applySqliteSchema, type DbClient } from "./db/client.js";
 import type { createEngine } from "./engine.js";
-import { validateWorkflowGraph } from "@wastat/shared";
+import { validateWorkflowGraph, wilsonInterval } from "@wastat/shared";
 import { aiRoutes } from "./routes/ai.js";
 import { broadcastRoutes } from "./routes/broadcasts.js";
 import { mcpRoutes } from "./routes/mcp.js";
@@ -524,15 +524,38 @@ export function registerApiRoutes(
     return { ok: true };
   });
 
+  function parseTriggerConfig(b: Record<string, unknown>) {
+    return {
+      triggerKeywords: Array.isArray(b.triggerKeywords)
+        ? b.triggerKeywords.filter((k): k is string => typeof k === "string" && k.trim().length > 0)
+        : null,
+      triggerAlgorithm: typeof b.triggerAlgorithm === "string" ? b.triggerAlgorithm : null,
+      triggerThreshold: typeof b.triggerThreshold === "number" && Number.isFinite(b.triggerThreshold) ? b.triggerThreshold : null,
+      sessionId: typeof b.sessionId === "number" && Number.isFinite(b.sessionId) ? b.sessionId : null,
+      distributionMode: typeof b.distributionMode === "string" ? b.distributionMode : null,
+    };
+  }
+
   app.post("/api/experiments", async (request, reply) => {
-    const b = (request.body ?? {}) as { name?: unknown; description?: unknown; active?: unknown };
+    const b = (request.body ?? {}) as { name?: unknown; description?: unknown; active?: unknown } & Record<string, unknown>;
     if (typeof b.name !== "string" || !b.name.trim()) {
       return reply.code(400).send({ error: "name is required" });
     }
+    const t = parseTriggerConfig(b);
     const info = await queryRun(
       dbClient,
-      "INSERT INTO experiments (name, description, active) VALUES (?, ?, ?)",
-      [b.name.trim(), typeof b.description === "string" ? b.description.trim() : null, b.active === false ? 0 : 1],
+      `INSERT INTO experiments (name, description, active, trigger_keywords, trigger_algorithm, trigger_threshold, session_id, distribution_mode)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        b.name.trim(),
+        typeof b.description === "string" ? b.description.trim() : null,
+        activeToDb(b.active === false ? 0 : 1),
+        t.triggerKeywords ? jsonToDb(dbClient, t.triggerKeywords) : null,
+        t.triggerAlgorithm ?? "dice",
+        t.triggerThreshold ?? 75,
+        t.sessionId,
+        t.distributionMode ?? "balanced",
+      ],
     );
     return reply.code(201).send({ id: Number(info.lastInsertRowid) });
   });
@@ -554,32 +577,75 @@ export function registerApiRoutes(
     const expId = Number(request.params.id);
     const exp = (await queryGet(
       dbClient,
-      "SELECT id, name, description, active, created_at AS createdAt FROM experiments WHERE id = ?",
+      `SELECT id, name, description, active, created_at AS createdAt,
+              trigger_keywords, trigger_algorithm, trigger_threshold, session_id, distribution_mode
+       FROM experiments WHERE id = ?`,
       [expId],
     )) as Record<string, unknown> | undefined;
     if (!exp) return reply.code(404).send({ error: "not found" });
+    // Normalize trigger_keywords: pg returns a native array, sqlite a JSON string.
+    let triggerKeywords: string[] | null = null;
+    const raw = exp.trigger_keywords;
+    if (Array.isArray(raw)) triggerKeywords = raw.filter((k): k is string => typeof k === "string");
+    else if (typeof raw === "string" && raw.trim()) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) triggerKeywords = parsed.filter((k): k is string => typeof k === "string");
+      } catch {}
+    }
     const workflows = await queryAll(
       dbClient,
       "SELECT id, name, description, active FROM workflows WHERE experiment_id = ? ORDER BY id ASC",
       [expId],
     );
-    return { ...exp, workflows };
+    return {
+      id: exp.id,
+      name: exp.name,
+      description: exp.description,
+      active: exp.active,
+      createdAt: exp.createdAt,
+      triggerKeywords,
+      triggerAlgorithm: (exp.trigger_algorithm as string) ?? "dice",
+      triggerThreshold: (exp.trigger_threshold as number) ?? 75,
+      sessionId: (exp.session_id as number | null) ?? null,
+      distributionMode: (exp.distribution_mode as string) ?? "balanced",
+      workflows,
+    };
   });
 
   app.put<{ Params: { id: string } }>("/api/experiments/:id", async (request, reply) => {
     const expId = Number(request.params.id);
     const exp = await queryGet(dbClient, "SELECT id FROM experiments WHERE id = ?", [expId]);
     if (!exp) return reply.code(404).send({ error: "not found" });
-    const b = (request.body ?? {}) as { name?: unknown; description?: unknown; active?: unknown };
+    const b = (request.body ?? {}) as { name?: unknown; description?: unknown; active?: unknown } & Record<string, unknown>;
     if (typeof b.name !== "string" || !b.name.trim()) {
       return reply.code(400).send({ error: "name is required" });
     }
-    await queryRun(dbClient, "UPDATE experiments SET name = ?, description = ?, active = ? WHERE id = ?", [
-      b.name.trim(),
-      typeof b.description === "string" ? b.description.trim() : null,
-      b.active === false ? 0 : 1,
-      expId,
-    ]);
+    // Trigger config is only overwritten when explicitly provided — a plain
+    // rename/toggle must not wipe the experiment's trigger.
+    const t = parseTriggerConfig(b);
+    await queryRun(
+      dbClient,
+      `UPDATE experiments SET
+         name = ?, description = ?, active = ?,
+         trigger_keywords = COALESCE(?, trigger_keywords),
+         trigger_algorithm = COALESCE(?, trigger_algorithm),
+         trigger_threshold = COALESCE(?, trigger_threshold),
+         session_id = COALESCE(?, session_id),
+         distribution_mode = COALESCE(?, distribution_mode)
+       WHERE id = ?`,
+      [
+        b.name.trim(),
+        typeof b.description === "string" ? b.description.trim() : null,
+        activeToDb(b.active === false ? 0 : 1),
+        t.triggerKeywords ? jsonToDb(dbClient, t.triggerKeywords) : null,
+        t.triggerAlgorithm,
+        t.triggerThreshold,
+        t.sessionId,
+        t.distributionMode,
+        expId,
+      ],
+    );
     return { ok: true };
   });
 
@@ -593,7 +659,116 @@ export function registerApiRoutes(
     return { ok: true };
   });
 
+  // Option C variant CRUD. A variant IS a trigger-less presentation workflow:
+  // POST creates an empty presentation workflow + experiment_variants row.
+  app.post<{ Params: { id: string } }>("/api/experiments/:id/variants", async (request, reply) => {
+    const expId = Number(request.params.id);
+    const exp = await queryGet(dbClient, "SELECT id FROM experiments WHERE id = ?", [expId]);
+    if (!exp) return reply.code(404).send({ error: "not found" });
+    const b = (request.body ?? {}) as { name?: unknown; weight?: unknown };
+    if (typeof b.name !== "string" || !b.name.trim()) {
+      return reply.code(400).send({ error: "name is required" });
+    }
+    const wf = await queryRun(
+      dbClient,
+      `INSERT INTO workflows (name, active, experiment_id) VALUES (?, ${trueSql(dbClient)}, ?)`,
+      [b.name.trim(), expId],
+    );
+    const workflowId = Number(wf.lastInsertRowid);
+    const weight = typeof b.weight === "number" && Number.isFinite(b.weight) ? b.weight : 100;
+    await execRun(
+      dbClient,
+      `INSERT INTO experiment_variants (experiment_id, workflow_id, weight, active) VALUES (?, ?, ?, ${trueSql(dbClient)})`,
+      [expId, workflowId, weight],
+    );
+    return reply.code(201).send({ workflowId, name: b.name.trim(), weight });
+  });
+
+  app.put<{ Params: { id: string; workflowId: string } }>(
+    "/api/experiments/:id/variants/:workflowId",
+    async (request, reply) => {
+      const expId = Number(request.params.id);
+      const workflowId = Number(request.params.workflowId);
+      const row = await queryGet(dbClient, "SELECT 1 FROM experiment_variants WHERE experiment_id = ? AND workflow_id = ?", [
+        expId,
+        workflowId,
+      ]);
+      if (!row) return reply.code(404).send({ error: "variant not found" });
+      const b = (request.body ?? {}) as { weight?: unknown; active?: unknown };
+      const weight = typeof b.weight === "number" && Number.isFinite(b.weight) ? b.weight : undefined;
+      // pg BOOLEAN column: pass native JS booleans; sqlite stores 0/1.
+      const active = b.active === undefined ? undefined : isPg ? b.active === true : b.active ? 1 : 0;
+      await execRun(
+        dbClient,
+        `UPDATE experiment_variants SET
+           weight = COALESCE(?, weight),
+           active = COALESCE(?, active)
+         WHERE experiment_id = ? AND workflow_id = ?`,
+        [weight ?? null, active ?? null, expId, workflowId],
+      );
+      return { ok: true };
+    },
+  );
+
+  app.delete<{ Params: { id: string; workflowId: string } }>(
+    "/api/experiments/:id/variants/:workflowId",
+    async (request, reply) => {
+      const expId = Number(request.params.id);
+      const workflowId = Number(request.params.workflowId);
+      const row = await queryGet(dbClient, "SELECT 1 FROM experiment_variants WHERE experiment_id = ? AND workflow_id = ?", [
+        expId,
+        workflowId,
+      ]);
+      if (!row) return reply.code(404).send({ error: "variant not found" });
+      // Hard delete of assignment rows + variant row; the workflow is kept but
+      // unlinked so its history/executions survive.
+      await execRun(dbClient, "DELETE FROM experiment_assignments WHERE experiment_id = ? AND workflow_id = ?", [
+        expId,
+        workflowId,
+      ]);
+      await execRun(dbClient, "DELETE FROM experiment_variants WHERE experiment_id = ? AND workflow_id = ?", [
+        expId,
+        workflowId,
+      ]);
+      await execRun(dbClient, "UPDATE workflows SET experiment_id = NULL WHERE id = ?", [workflowId]);
+      return { ok: true };
+    },
+  );
+
+  // Real adopt-winner: winner → weight 100 + active; losers inactive (soft
+  // pause, existing assignments stay intact); distribution switches to weighted
+  // so the winner takes 100% of new traffic.
+  app.post<{ Params: { id: string } }>("/api/experiments/:id/adopt-winner", async (request, reply) => {
+    const expId = Number(request.params.id);
+    const exp = (await queryGet(dbClient, "SELECT id FROM experiments WHERE id = ?", [expId])) as
+      | { id: number }
+      | undefined;
+    if (!exp) return reply.code(404).send({ error: "not found" });
+    const b = (request.body ?? {}) as { workflowId?: unknown };
+    const winnerId = Number(b.workflowId);
+    if (!Number.isFinite(winnerId)) return reply.code(400).send({ error: "workflowId is required" });
+    const winner = await queryGet(dbClient, "SELECT 1 FROM experiment_variants WHERE experiment_id = ? AND workflow_id = ?", [
+      expId,
+      winnerId,
+    ]);
+    if (!winner) return reply.code(404).send({ error: "variant not found" });
+
+    await execRun(
+      dbClient,
+      `UPDATE experiment_variants SET
+         active = CASE WHEN workflow_id = ? THEN ${trueSql(dbClient)} ELSE ${falseSql(dbClient)} END,
+         weight = CASE WHEN workflow_id = ? THEN 100 ELSE 0 END
+       WHERE experiment_id = ?`,
+      [winnerId, winnerId, expId],
+    );
+    await execRun(dbClient, "UPDATE experiments SET distribution_mode = 'weighted' WHERE id = ?", [expId]);
+
+    return { ok: true, winnerWorkflowId: winnerId, distributionMode: "weighted" };
+  });
+
   // PRD §33: reply-rate per variant and experiment totals.
+  // Canonical denominator is messaged (presentations actually delivered), not
+  // assigned — a contact can be assigned before their first message goes out.
   app.get<{ Params: { id: string } }>("/api/experiments/:id/stats", async (request, reply) => {
     const expId = Number(request.params.id);
     const exp = (await queryGet(
@@ -606,6 +781,8 @@ export function registerApiRoutes(
       dbClient,
       `
         SELECT w.id AS workflowId, w.name, w.active,
+          COALESCE(ev.weight, 100) AS weight,
+          COALESCE(ev.active, ${trueSql(dbClient)}) AS active,
           (SELECT COUNT(DISTINCT contact_id) FROM experiment_assignments WHERE experiment_id = ? AND workflow_id = w.id) AS assigned,
           (SELECT COUNT(DISTINCT m.contact_id) FROM messages m
              JOIN workflow_executions we ON we.id = m.workflow_execution_id
@@ -615,24 +792,53 @@ export function registerApiRoutes(
               AND EXISTS (SELECT 1 FROM messages o WHERE o.id = r.in_reply_to_id
                           AND o.workflow_execution_id IN (SELECT id FROM workflow_executions WHERE workflow_id = w.id))) AS replied
         FROM workflows w
+        LEFT JOIN experiment_variants ev ON ev.experiment_id = w.experiment_id AND ev.workflow_id = w.id
         WHERE w.experiment_id = ?
         ORDER BY w.id ASC
       `,
       [expId, expId],
-    )) as Array<{ workflowId: number; name: string; active: number; assigned: number; messaged: number; replied: number }>;
+    )) as Array<{
+      workflowId: number;
+      name: string;
+      active: number;
+      weight: number;
+      assigned: number;
+      messaged: number;
+      replied: number;
+    }>;
 
-    const variantStats = variants.map((r) => ({
-      ...r,
-      replyRate: r.assigned > 0 ? Math.round((r.replied / r.assigned) * 1000) / 10 : 0,
-    }));
+    // Normalize provider quirks: pg lowercases unquoted aliases (workflowid),
+    // COUNT/BIGSERIAL come back as strings, and BOOLEAN vs 0/1 differs.
+    const variantStats = variants.map((r) => {
+      const messaged = Number(r.messaged) || 0;
+      const replied = Number(r.replied) || 0;
+      const assigned = Number(r.assigned) || 0;
+      const wilson = wilsonInterval(replied, messaged);
+      return {
+        workflowId: Number((r as any).workflowId ?? (r as any).workflowid),
+        name: r.name,
+        active: activeFromDb((r as any).active),
+        weight: Number(r.weight) || 0,
+        assigned,
+        messaged,
+        replied,
+        replyRate: messaged > 0 ? Math.round((replied / messaged) * 1000) / 10 : 0,
+        replyRateCI: wilson,
+      };
+    });
 
     const totalAssigned = variantStats.reduce((sum, v) => sum + v.assigned, 0);
     const totalMessaged = variantStats.reduce((sum, v) => sum + v.messaged, 0);
     const totalReplied = variantStats.reduce((sum, v) => sum + v.replied, 0);
-    const totalReplyRate = totalAssigned > 0 ? Math.round((totalReplied / totalAssigned) * 1000) / 10 : 0;
+    const totalReplyRate = totalMessaged > 0 ? Math.round((totalReplied / totalMessaged) * 1000) / 10 : 0;
 
     return {
-      experiment: exp,
+      experiment: {
+        id: Number(exp.id),
+        name: exp.name,
+        description: exp.description,
+        active: activeFromDb(exp.active),
+      },
       totals: {
         assigned: totalAssigned,
         messaged: totalMessaged,

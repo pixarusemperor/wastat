@@ -8,6 +8,12 @@ console.log(`[DB] Database initialized successfully using provider: ${dbClient.p
 import { autoSeedProductionWorkflows } from "./seed-defaults.js";
 await autoSeedProductionWorkflows(dbClient);
 
+import { backfillExperimentVariants } from "./db/ab-migration.js";
+const backfilled = await backfillExperimentVariants(dbClient);
+if (backfilled > 0) {
+  console.log(`[A/B] Backfilled ${backfilled} experiment_variants row(s) from existing workflows`);
+}
+
 // ponytail: session API keys are read as plaintext until the encryption
 // decision lands; the column is already BLOB so it upgrades in place.
 const getApiKey = async (sessionId: number) =>

@@ -216,6 +216,101 @@ describe("workflow CRUD API", () => {
     const checkWf = db.prepare("SELECT experiment_id FROM workflows WHERE id = ?").get(wfRes.json().id) as { experiment_id: number | null };
     expect(checkWf.experiment_id).toBeNull();
   });
+
+  it("adds, updates (weight/active), and deletes experiment variants", async () => {
+    const { db, app } = await setup();
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/experiments",
+      payload: { name: "Variant CRUD", description: "" },
+    });
+    const expId = created.json().id as number;
+
+    // Add a variant: creates a trigger-less presentation workflow + variant row.
+    const addRes = await app.inject({
+      method: "POST",
+      url: `/api/experiments/${expId}/variants`,
+      payload: { name: "Presentation A", weight: 40 },
+    });
+    expect(addRes.statusCode).toBe(201);
+    const wfId = addRes.json().workflowId as number;
+    const row = db
+      .prepare("SELECT weight, active FROM experiment_variants WHERE experiment_id = ? AND workflow_id = ?")
+      .get(expId, wfId) as { weight: number; active: number };
+    expect(row.weight).toBe(40);
+    expect(row.active).toBe(1);
+    // The presentation workflow must have NO trigger node (Option C).
+    const trigger = db
+      .prepare("SELECT node_key FROM workflow_nodes WHERE workflow_id = ? AND type = 'trigger'")
+      .get(wfId);
+    expect(trigger).toBeUndefined();
+
+    // Update weight + pause.
+    const putRes = await app.inject({
+      method: "PUT",
+      url: `/api/experiments/${expId}/variants/${wfId}`,
+      payload: { weight: 10, active: false },
+    });
+    expect(putRes.statusCode).toBe(200);
+    const row2 = db
+      .prepare("SELECT weight, active FROM experiment_variants WHERE experiment_id = ? AND workflow_id = ?")
+      .get(expId, wfId) as { weight: number; active: number };
+    expect(row2.weight).toBe(10);
+    expect(row2.active).toBe(0);
+
+    // Delete variant: assignment rows removed, workflow kept but unlinked.
+    const delRes = await app.inject({
+      method: "DELETE",
+      url: `/api/experiments/${expId}/variants/${wfId}`,
+    });
+    expect(delRes.statusCode).toBe(200);
+    expect(
+      db.prepare("SELECT 1 FROM experiment_variants WHERE experiment_id = ? AND workflow_id = ?").get(expId, wfId),
+    ).toBeUndefined();
+    const wfRow = db.prepare("SELECT experiment_id FROM workflows WHERE id = ?").get(wfId) as {
+      experiment_id: number | null;
+    };
+    expect(wfRow.experiment_id).toBeNull();
+  });
+
+  it("adopt-winner: winner goes to weight 100 active, losers inactive", async () => {
+    const { db, app } = await setup();
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/experiments",
+      payload: { name: "Adopt A/B", description: "" },
+    });
+    const expId = created.json().id as number;
+
+    const mk = async (name: string, weight: number) => {
+      const add = await app.inject({
+        method: "POST",
+        url: `/api/experiments/${expId}/variants`,
+        payload: { name, weight },
+      });
+      return add.json().workflowId as number;
+    };
+    const wA = await mk("A", 50);
+    const wB = await mk("B", 50);
+
+    const adopt = await app.inject({
+      method: "POST",
+      url: `/api/experiments/${expId}/adopt-winner`,
+      payload: { workflowId: wA },
+    });
+    expect(adopt.statusCode).toBe(200);
+    const state = adopt.json();
+    const rows = db
+      .prepare("SELECT workflow_id AS w, weight, active FROM experiment_variants WHERE experiment_id = ?")
+      .all(expId) as Array<{ w: number; weight: number; active: number }>;
+    const byId = Object.fromEntries(rows.map((r) => [r.w, r]));
+    expect(byId[wA].weight).toBe(100);
+    expect(byId[wA].active).toBe(1);
+    expect(byId[wB].weight).toBe(0);
+    expect(byId[wB].active).toBe(0);
+    expect(state.winnerWorkflowId).toBe(wA);
+    expect(state.distributionMode).toBe("weighted");
+  });
 });
 
 describe("experiment funnel API", () => {
@@ -268,6 +363,50 @@ describe("experiment funnel API", () => {
     expect(stages.phase_2_closed.reached).toBe(1);
     // Contact 2 is assigned but never entered this variant's flow.
     expect(stages.phase_2_closed.converted).toBe(0);
+  });
+
+  it("stats: reply-rate is replied/messaged (PRD §33) and includes weight/active per variant", async () => {
+    const { db, app } = await setup();
+    db.exec("INSERT INTO sessions (id, name, provider_session_id) VALUES (1, 's', 'ps')");
+    for (const phone of ["+100", "+200"]) {
+      db.prepare("INSERT INTO contacts (phone) VALUES (?)").run(phone);
+    }
+    const expId = (await app.inject({ method: "POST", url: "/api/experiments", payload: { name: "RR A/B" } })).json().id as number;
+    const wfId = (
+      await app.inject({ method: "POST", url: "/api/workflows", payload: { ...validGraph, name: "V1", experimentId: expId } })
+    ).json().id as number;
+    db.prepare("INSERT INTO experiment_variants (experiment_id, workflow_id, weight, active) VALUES (?, ?, 70, 1)").run(expId, wfId);
+
+    // Contact 1: assigned + messaged (2 outbound) + replied (1 inbound attributed).
+    db.prepare("INSERT INTO experiment_assignments (experiment_id, contact_id, workflow_id) VALUES (?, 1, ?)").run(expId, wfId);
+    db.prepare("INSERT INTO workflow_executions (workflow_id, session_id, contact_id) VALUES (?, 1, 1)").run(wfId);
+    db.prepare(
+      "INSERT INTO messages (session_id, contact_id, direction, message_type, timestamp, workflow_execution_id) VALUES (1, 1, 'out', 'text', '2026-08-24T10:00:00Z', ?)",
+    ).run(wfId);
+    db.prepare(
+      "INSERT INTO messages (session_id, contact_id, direction, message_type, timestamp, workflow_execution_id) VALUES (1, 1, 'out', 'text', '2026-08-24T10:01:00Z', ?)",
+    ).run(wfId);
+    db.prepare(
+      "INSERT INTO messages (session_id, contact_id, direction, message_type, timestamp, in_reply_to_id) VALUES (1, 1, 'in', 'text', '2026-08-24T11:30:00Z', 1)",
+    ).run();
+    // Contact 2: assigned but never messaged (no outbound).
+    db.prepare("INSERT INTO experiment_assignments (experiment_id, contact_id, workflow_id) VALUES (?, 2, ?)").run(expId, wfId);
+
+    const res = await app.inject({ method: "GET", url: `/api/experiments/${expId}/stats` });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    const v = body.variants[0];
+    // assigned=2, messaged=1 (distinct contacts with outbound), replied=1
+    expect(v.assigned).toBe(2);
+    expect(v.messaged).toBe(1);
+    expect(v.replied).toBe(1);
+    // Canonical: replied / messaged = 100% (NOT replied/assigned = 50%)
+    expect(v.replyRate).toBe(100);
+    expect(v.weight).toBe(70);
+    expect(v.active).toBe(1);
+    expect(body.totals.replyRate).toBe(100);
+    expect(typeof v.replyRateCI).toBe("object");
+    expect(v.replyRateCI.low).toBeLessThanOrEqual(v.replyRateCI.high);
   });
 
   it("keeps the funnel empty for an untouched experiment", async () => {

@@ -198,6 +198,22 @@ export function createEngine(db: DbClient | BetterSqlite3.Database, deps: Engine
     queryGet(dbClient, "SELECT node_key FROM workflow_nodes WHERE workflow_id = ? AND type = 'trigger'", [
       workflowId,
     ]);
+  // Presentation (trigger-less) entry: the node with no incoming edges —
+  // i.e. the first node the graph executes, which for Option C variants is
+  // the first send node. Lowest id wins if the graph has several entries.
+  const getEntryNode = async (workflowId: number | string) =>
+    queryGet(
+      dbClient,
+      `SELECT node_key FROM workflow_nodes wn
+       WHERE wn.workflow_id = ?
+         AND NOT EXISTS (
+           SELECT 1 FROM workflow_edges we
+           WHERE we.workflow_id = wn.workflow_id AND we.target_key = wn.node_key
+         )
+       ORDER BY wn.id ASC
+       LIMIT 1`,
+      [workflowId],
+    );
   const getTriggerText = async (executionId: number) =>
     queryGet(
       dbClient,
@@ -779,6 +795,150 @@ export function createEngine(db: DbClient | BetterSqlite3.Database, deps: Engine
       }
     }
 
+    // ---- Option C: experiment-owned shared trigger. If an active experiment
+    // has trigger_keywords set, route through IT (variants are presentation
+    // workflows picked from experiment_variants). Experiments without
+    // trigger_keywords fall through to the legacy per-workflow matching below.
+    const keywordList = (raw: unknown): string[] => {
+      if (Array.isArray(raw)) return raw.filter((k): k is string => typeof k === "string" && !!k.trim());
+      if (typeof raw === "string" && raw.trim()) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) return parsed.filter((k): k is string => typeof k === "string" && !!k.trim());
+        } catch {}
+      }
+      return [];
+    };
+
+    const activeExperiments = (await queryAll(
+      dbClient,
+      `SELECT id, trigger_keywords, trigger_algorithm, trigger_threshold
+       FROM experiments
+       WHERE active = ${trueSql(dbClient)}
+         AND trigger_keywords IS NOT NULL
+         AND (session_id IS NULL OR session_id = ?)`,
+      [sessionId],
+    )) as Array<{
+      id: number;
+      trigger_keywords: unknown;
+      trigger_algorithm: string;
+      trigger_threshold: number;
+    }>;
+
+    let bestExperiment: { id: number; score: number; keyword: string } | null = null;
+    for (const exp of activeExperiments) {
+      const phrases = keywordList(exp.trigger_keywords);
+      if (phrases.length === 0) continue;
+      const algorithm =
+        exp.trigger_algorithm === "exact"
+          ? "exact"
+          : exp.trigger_algorithm === "levenshtein"
+            ? "levenshtein"
+            : "dice";
+      const threshold =
+        typeof exp.trigger_threshold === "number"
+          ? exp.trigger_threshold <= 1
+            ? exp.trigger_threshold * 100
+            : exp.trigger_threshold
+          : 75;
+      let expScore = 0;
+      let expKeyword = "";
+      for (const p of phrases) {
+        const { score, matched } = evaluateMatch(
+          { phrase: p, algorithm, threshold },
+          msg.text ?? "",
+        );
+        const normP = normalize(p);
+        const cleanMsg = (msg.text ?? "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase()
+          .replace(/[^\p{L}\p{N}\s]/gu, " ")
+          .trim();
+        const words = cleanMsg.split(/\s+/);
+        const isWord = normP.length > 0 && (words.includes(normP) || cleanMsg.includes(normP));
+        if (matched || isWord) {
+          const effScore = isWord ? Math.max(score, 0.95) : score;
+          if (effScore > expScore) {
+            expScore = effScore;
+            expKeyword = p;
+          }
+        }
+      }
+      if (expScore > 0 && (!bestExperiment || expScore > bestExperiment.score)) {
+        bestExperiment = { id: Number(exp.id), score: expScore, keyword: expKeyword };
+      }
+    }
+
+    if (bestExperiment) {
+      const expId = bestExperiment.id;
+      // Sticky first: an already-assigned contact keeps their variant.
+      const sticky = (await queryGet(
+        dbClient,
+        "SELECT workflow_id FROM experiment_assignments WHERE experiment_id = ? AND contact_id = ?",
+        [expId, contactId],
+      )) as { workflow_id: number } | undefined;
+
+      let targetWorkflowId: number;
+      if (sticky) {
+        targetWorkflowId = Number(sticky.workflow_id);
+      } else {
+        const expRow = (await queryGet(dbClient, "SELECT distribution_mode FROM experiments WHERE id = ?", [
+          expId,
+        ])) as { distribution_mode: string } | undefined;
+        const distributionMode = expRow?.distribution_mode ?? "balanced";
+        const activeVariants = (await queryAll(
+          dbClient,
+          `SELECT workflow_id AS id, weight FROM experiment_variants
+           WHERE experiment_id = ? AND active = ${trueSql(dbClient)}
+           ORDER BY workflow_id ASC`,
+          [expId],
+        )) as Array<{ id: number; weight: number }>;
+        if (activeVariants.length === 0) return null;
+
+        if (distributionMode === "weighted") {
+          // Weighted random: weight w means w% of new assignments.
+          const totalWeight = activeVariants.reduce((sum, v) => sum + (Number(v.weight) || 0), 0);
+          if (totalWeight <= 0) return null;
+          let roll = rng() * totalWeight;
+          let picked: number | undefined;
+          for (const v of activeVariants) {
+            roll -= Number(v.weight) || 0;
+            if (roll < 0) {
+              picked = Number(v.id);
+              break;
+            }
+          }
+          if (picked === undefined) picked = Number(activeVariants[activeVariants.length - 1].id);
+          targetWorkflowId = picked;
+        } else {
+          // Balanced default: least-assigned active variant (ties -> lowest id).
+          const pick = (await queryGet(
+            dbClient,
+            `SELECT ev.workflow_id AS id FROM experiment_variants ev
+             LEFT JOIN experiment_assignments ea
+               ON ea.experiment_id = ev.experiment_id AND ea.workflow_id = ev.workflow_id
+             WHERE ev.experiment_id = ? AND ev.active = ${trueSql(dbClient)}
+             GROUP BY ev.workflow_id
+             ORDER BY COUNT(ea.contact_id) ASC, ev.workflow_id ASC
+             LIMIT 1`,
+            [expId],
+          )) as { id: number } | undefined;
+          if (!pick) return null;
+          targetWorkflowId = Number(pick.id);
+        }
+        // composite-PK table: no id column, so use execRun (no RETURNING)
+        await execRun(
+          dbClient,
+          "INSERT INTO experiment_assignments (experiment_id, contact_id, workflow_id) VALUES (?, ?, ?)",
+          [expId, contactId, targetWorkflowId],
+        );
+      }
+      // Option C: variants are trigger-less presentation workflows — start at
+      // their first node, the experiment owns the trigger.
+      return startExecution(targetWorkflowId, sessionId, contactId, messageId, {}, { skipTrigger: true });
+    }
+
     // Filter active workflows strictly by session: workflow.session_id IS NULL OR workflow.session_id = sessionId
     const activeWorkflows = (await queryAll(
       dbClient,
@@ -1203,19 +1363,28 @@ export function createEngine(db: DbClient | BetterSqlite3.Database, deps: Engine
     contactId: number,
     triggerMessageId?: number,
     initialVars: Record<string, unknown> = {},
+    opts?: { skipTrigger?: boolean },
   ): Promise<number | null> {
     const wf = (await getWorkflow(workflowId)) as { active: number } | undefined;
     if (!wf?.active) return null;
-    const trigger = (await getTriggerNode(workflowId)) as { node_key: string } | undefined;
-    if (!trigger) return null;
-    const first = (await getNextKey(workflowId, trigger.node_key)) as { target_key: string } | undefined;
-    if (!first) return null;
+    let first: { node_key?: string; target_key?: string } | undefined;
+    if (opts?.skipTrigger) {
+      // Presentation path (Option C): the variant workflow has no trigger
+      // node — start at its first executable node (entry with no in-edges).
+      first = (await getEntryNode(workflowId)) as { node_key: string } | undefined;
+    } else {
+      const trigger = (await getTriggerNode(workflowId)) as { node_key: string } | undefined;
+      if (!trigger) return null;
+      first = (await getNextKey(workflowId, trigger.node_key)) as { target_key: string } | undefined;
+    }
+    const firstKey = first?.node_key ?? first?.target_key;
+    if (!firstKey) return null;
     if (triggerMessageId != null && (await findExecutionByTrigger(triggerMessageId))) return null;
 
     const info = await queryRun(
       dbClient,
       "INSERT INTO workflow_executions (workflow_id, session_id, contact_id, trigger_message_id, status, current_node_key, vars) VALUES (?, ?, ?, ?, 'running', ?, ?)",
-      [workflowId, sessionId, contactId, triggerMessageId ?? null, first.target_key, jsonToDb(dbClient, initialVars)],
+      [workflowId, sessionId, contactId, triggerMessageId ?? null, firstKey, jsonToDb(dbClient, initialVars)],
     );
     const executionId = Number(info.lastInsertRowid);
 
