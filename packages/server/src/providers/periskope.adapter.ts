@@ -458,4 +458,51 @@ export class PeriskopeProviderAdapter implements WhatsAppProviderAdapter {
       body: JSON.stringify({ all: options?.all ?? true }),
     }).catch(() => {});
   }
+
+  async registerWebhook(session: SessionContext, url: string): Promise<void> {
+    const baseUrl = this.getBaseUrl();
+    const apiKey = session.apiKey || process.env.PERISKOPE_API_KEY;
+    if (!apiKey) throw new Error("Periskope apiKey is required to register webhook");
+
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    };
+
+    // Check existing webhooks to avoid duplicates
+    try {
+      const listRes = await fetch(`${baseUrl}/webhooks`, { method: "GET", headers });
+      if (listRes.ok) {
+        const hooks: any = await listRes.json().catch(() => []);
+        const list = Array.isArray(hooks) ? hooks : hooks.data || [];
+        const existing = list.find((h: any) => (h.hookUrl || h.hook_url || h.url) === url);
+        if (existing) {
+          return; // Already registered
+        }
+      }
+    } catch {
+      // Continue to registration attempt
+    }
+
+    const res = await fetch(`${baseUrl}/webhooks`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        hookUrl: url,
+        integrationName: [
+          "message.created",
+          "message.ack.updated",
+          "reaction.created",
+          "org.phone.updated",
+          "org.phone.connected",
+          "org.phone.disconnected",
+        ],
+      }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Failed to register webhook with Periskope (HTTP ${res.status}): ${text}`);
+    }
+  }
 }

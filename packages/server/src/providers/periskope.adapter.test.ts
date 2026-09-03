@@ -166,4 +166,50 @@ describe("PeriskopeProviderAdapter", () => {
       }
     });
   });
+
+  describe("registerWebhook", () => {
+    it("registers webhook on Periskope when not already present", async () => {
+      const origFetch = global.fetch;
+      const calls: Array<{ url: string; method?: string; body?: string }> = [];
+      try {
+        global.fetch = (async (url: string, init?: any) => {
+          calls.push({ url, method: init?.method, body: init?.body });
+          if (init?.method === "GET") {
+            return { ok: true, json: async () => [] };
+          }
+          return { ok: true, status: 201, json: async () => ({ id: "wh_1" }) };
+        }) as any;
+
+        await adapter.registerWebhook(mockSession, "https://example.com/webhooks/periskope");
+        expect(calls).toHaveLength(2);
+        expect(calls[0].method).toBe("GET");
+        expect(calls[1].method).toBe("POST");
+        expect(JSON.parse(calls[1].body!)).toMatchObject({
+          hookUrl: "https://example.com/webhooks/periskope",
+        });
+      } finally {
+        global.fetch = origFetch;
+      }
+    });
+
+    it("skips registration if already registered on Periskope", async () => {
+      const origFetch = global.fetch;
+      const calls: Array<{ url: string; method?: string }> = [];
+      try {
+        global.fetch = (async (url: string, init?: any) => {
+          calls.push({ url, method: init?.method });
+          return {
+            ok: true,
+            json: async () => [{ hookUrl: "https://example.com/webhooks/periskope" }],
+          };
+        }) as any;
+
+        await adapter.registerWebhook(mockSession, "https://example.com/webhooks/periskope");
+        expect(calls).toHaveLength(1);
+        expect(calls[0].method).toBe("GET");
+      } finally {
+        global.fetch = origFetch;
+      }
+    });
+  });
 });

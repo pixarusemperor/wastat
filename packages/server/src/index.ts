@@ -26,6 +26,7 @@ import { makeWasenderAdmin, upsertSession } from "./wasender-admin.js";
 import { getProviderAdapter, type WhatsAppProviderType } from "./providers/index.js";
 import { decryptSecret } from "./crypto.js";
 import { jsonFromDb } from "./db/client.js";
+import { createStorageFromEnv } from "./media.js";
 
 const app = await buildApp(dbClient, {
   wasenderPat: process.env.WASENDER_PAT,
@@ -60,12 +61,31 @@ const app = await buildApp(dbClient, {
         };
 
         const inputAny = input as any;
+        let mediaUrl = inputAny.mediaUrl;
+        let mimeType = inputAny.mimeType;
+        let filename = inputAny.filename;
+
+        if (!mediaUrl && inputAny.mediaId) {
+          const asset = (await queryGet(
+            dbClient,
+            "SELECT r2_key, mime_type, filename FROM media_assets WHERE id = ?",
+            [inputAny.mediaId],
+          )) as { r2_key: string; mime_type?: string; filename?: string } | undefined;
+          if (asset?.r2_key) {
+            try {
+              mediaUrl = createStorageFromEnv().getPublicUrl(asset.r2_key);
+            } catch {}
+            mimeType ||= asset.mime_type;
+            filename ||= asset.filename;
+          }
+        }
+
         return adapter.sendMessage(sessionContext, {
           to: input.toPhone,
           text: input.text,
-          mediaUrl: inputAny.mediaUrl,
-          fileName: inputAny.filename,
-          mimetype: inputAny.mimeType,
+          mediaUrl,
+          fileName: filename,
+          mimetype: mimeType,
         });
       },
   markMessageAsRead: process.env.MOCK_SEND

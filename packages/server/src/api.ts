@@ -1097,11 +1097,23 @@ export function registerApiRoutes(
           [name, cleanPhone, status, apiKeyEncrypted, webhookSecretEncrypted, jsonToDb(dbClient, config)],
         );
         const createdId = info.lastInsertRowid ?? 0;
-        const row = await queryGet(
+        const row = (await queryGet(
           dbClient,
           "SELECT id, name, provider, provider_session_id, status, api_key_encrypted, webhook_secret, provider_config, created_at FROM sessions WHERE (id = ? OR (provider = 'periskope' AND provider_session_id = ?)) ORDER BY id DESC LIMIT 1",
           [createdId, cleanPhone],
-        );
+        )) as any;
+
+        // Auto-register Periskope webhook endpoint
+        const base = process.env.PUBLIC_BASE_URL || "https://wassflow.orizongroup.online";
+        const webhookUrl = `${base.replace(/\/$/, "")}/webhooks/periskope`;
+        try {
+          const adapter = getProviderAdapter("periskope");
+          const sessionCtx = await resolveSessionContext(row);
+          await adapter.registerWebhook?.(sessionCtx, webhookUrl);
+        } catch (regErr) {
+          request.log.warn({ regErr }, "Auto-registering Periskope webhook failed");
+        }
+
         return reply.code(201).send(formatSession(row));
       } catch (err) {
         request.log.error(err);
@@ -1305,11 +1317,17 @@ export function registerApiRoutes(
           : `${base.replace(/\/$/, "")}/webhooks/wasender/${row.provider_session_id}`;
         const targetUrl = request.body?.webhookUrl || defaultUrl;
         if (admin && (!row.provider || row.provider === "wasender")) {
-          await admin.updateWebhook(Number(row.provider_session_id), targetUrl);
+          await admin.updateWebhook(Number(row.provider_session_id), targetUrl).catch((err) => {
+            request.log.warn({ err }, "Admin webhook update failed");
+          });
         } else {
           const adapter = getProviderAdapter(row.provider || "wasender");
           const ctx = await resolveSessionContext(row);
-          await adapter.registerWebhook?.(ctx, targetUrl);
+          try {
+            await adapter.registerWebhook?.(ctx, targetUrl);
+          } catch (err) {
+            request.log.warn({ err }, "Adapter webhook registration failed");
+          }
         }
         return { ok: true, webhookUrl: targetUrl };
       } catch (err) {

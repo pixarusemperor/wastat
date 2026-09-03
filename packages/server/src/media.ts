@@ -215,6 +215,30 @@ export async function registerMediaRoutes(
     }));
   });
 
+  // Get single media asset metadata + publicUrl
+  app.get<{ Params: { id: string } }>("/api/media/:id", async (request, reply) => {
+    const id = Number(request.params.id);
+    const row = (await queryGet(
+      db,
+      'SELECT id, filename, mime_type AS "mimeType", size, r2_key AS "r2Key", created_at AS "createdAt" FROM media_assets WHERE id = ?',
+      [id],
+    )) as any;
+    if (!row) return reply.code(404).send({ error: "Media not found" });
+    return {
+      ...row,
+      publicUrl: storage.getPublicUrl(row.r2Key as string),
+    };
+  });
+
+  // Get media content directly (redirect to publicUrl)
+  app.get<{ Params: { id: string } }>("/api/media/:id/content", async (request, reply) => {
+    const id = Number(request.params.id);
+    const row = (await queryGet(db, 'SELECT id, r2_key AS "r2Key" FROM media_assets WHERE id = ?', [id])) as any;
+    if (!row) return reply.code(404).send({ error: "Media not found" });
+    const publicUrl = storage.getPublicUrl(row.r2Key as string);
+    return reply.redirect(publicUrl, 302);
+  });
+
   // Delete media asset
   app.delete<{ Params: { id: string } }>("/api/media/:id", async (request, reply) => {
     const id = Number(request.params.id);

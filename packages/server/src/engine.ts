@@ -11,6 +11,7 @@ import {
 } from "@wastat/shared";
 import { realClock, createScheduler, type Clock, type JobRow } from "./scheduler.js";
 import { buildTextMenu } from "./wasender.js";
+import { createStorageFromEnv } from "./media.js";
 import {
   queryAll,
   queryGet,
@@ -396,14 +397,41 @@ export function createEngine(db: DbClient | BetterSqlite3.Database, deps: Engine
             };
             const rawCaption = config.caption ?? config.text;
             const caption = rawCaption ? interpolateVariables(rawCaption, vars, contact, session, triggerMsg, rng) : undefined;
+
+            let resolvedMediaUrl = config.mediaUrl ?? config.url;
+            let resolvedMimeType = config.mimeType;
+            let resolvedFilename = config.filename ?? config.fileName;
+            let resolvedMediaType = config.mediaType;
+
+            if (!resolvedMediaUrl && config.mediaId) {
+              const asset = (await queryGet(
+                dbClient,
+                "SELECT r2_key, mime_type, filename FROM media_assets WHERE id = ?",
+                [config.mediaId],
+              )) as { r2_key: string; mime_type?: string; filename?: string } | undefined;
+              if (asset?.r2_key) {
+                try {
+                  resolvedMediaUrl = createStorageFromEnv().getPublicUrl(asset.r2_key);
+                } catch {}
+                resolvedMimeType ||= asset.mime_type;
+                resolvedFilename ||= asset.filename;
+                if (!resolvedMediaType && asset.mime_type) {
+                  if (asset.mime_type.startsWith("image/")) resolvedMediaType = "image";
+                  else if (asset.mime_type.startsWith("audio/")) resolvedMediaType = "audio";
+                  else if (asset.mime_type.startsWith("video/")) resolvedMediaType = "video";
+                  else resolvedMediaType = "document";
+                }
+              }
+            }
+
             await enqueueSend(executionId, exec.current_node_key, {
               kind: "media",
               text: caption,
-              mediaType: config.mediaType,
+              mediaType: resolvedMediaType,
               mediaId: config.mediaId,
-              mediaUrl: config.mediaUrl ?? config.url,
-              mimeType: config.mimeType,
-              filename: config.filename ?? config.fileName,
+              mediaUrl: resolvedMediaUrl,
+              mimeType: resolvedMimeType,
+              filename: resolvedFilename,
             });
             await setWaiting(executionId, exec.current_node_key);
             return;
@@ -1234,6 +1262,33 @@ export function createEngine(db: DbClient | BetterSqlite3.Database, deps: Engine
         mimeType?: string;
         filename?: string;
       };
+
+      let resolvedMediaUrl = payload.mediaUrl;
+      let resolvedMimeType = payload.mimeType;
+      let resolvedFilename = payload.filename;
+      let resolvedMediaType = payload.mediaType;
+
+      if (!resolvedMediaUrl && payload.mediaId) {
+        const asset = (await queryGet(
+          dbClient,
+          "SELECT r2_key, mime_type, filename FROM media_assets WHERE id = ?",
+          [payload.mediaId],
+        )) as { r2_key: string; mime_type?: string; filename?: string } | undefined;
+        if (asset?.r2_key) {
+          try {
+            resolvedMediaUrl = createStorageFromEnv().getPublicUrl(asset.r2_key);
+          } catch {}
+          resolvedMimeType ||= asset.mime_type;
+          resolvedFilename ||= asset.filename;
+          if (!resolvedMediaType && asset.mime_type) {
+            if (asset.mime_type.startsWith("image/")) resolvedMediaType = "image";
+            else if (asset.mime_type.startsWith("audio/")) resolvedMediaType = "audio";
+            else if (asset.mime_type.startsWith("video/")) resolvedMediaType = "video";
+            else resolvedMediaType = "document";
+          }
+        }
+      }
+
       const startTime = clock.now();
       await queryRun(
         dbClient,
@@ -1248,10 +1303,10 @@ export function createEngine(db: DbClient | BetterSqlite3.Database, deps: Engine
             kind: payload.kind,
             to: contact.phone,
             text: payload.text,
-            mediaType: payload.mediaType,
-            mediaUrl: payload.mediaUrl,
-            mimeType: payload.mimeType,
-            filename: payload.filename,
+            mediaType: resolvedMediaType,
+            mediaUrl: resolvedMediaUrl,
+            mimeType: resolvedMimeType,
+            filename: resolvedFilename,
           }),
         ],
       );
@@ -1261,11 +1316,11 @@ export function createEngine(db: DbClient | BetterSqlite3.Database, deps: Engine
         toPhone: contact.phone,
         kind: payload.kind,
         text: payload.text,
-        mediaType: payload.mediaType,
+        mediaType: resolvedMediaType,
         mediaId: payload.mediaId,
-        mediaUrl: payload.mediaUrl,
-        mimeType: payload.mimeType,
-        filename: payload.filename,
+        mediaUrl: resolvedMediaUrl,
+        mimeType: resolvedMimeType,
+        filename: resolvedFilename,
       });
 
       const durationMs = clock.now() - startTime;
