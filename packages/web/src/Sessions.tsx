@@ -1,19 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
-import { api } from "./api.js";
+import { api, type SessionItem } from "./api.js";
 import { Dialog } from "./ui.js";
 
-interface SessionRow {
-  id: number;
-  name: string;
-  providerSessionId: string;
-  status: string;
-}
+type SessionRow = SessionItem;
 
 export function SessionsPage() {
   const [sessions, setSessions] = useState<SessionRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [editingSession, setEditingSession] = useState<SessionRow | null>(null);
   const [deleting, setDeleting] = useState<SessionRow | null>(null);
   const [qrSession, setQrSession] = useState<SessionRow | null>(null);
   const [actionBusy, setActionBusy] = useState<number | null>(null);
@@ -75,18 +71,22 @@ export function SessionsPage() {
   async function handleSyncWebhook(s: SessionRow) {
     setActionBusy(s.id);
     try {
-      const url = `${window.location.origin}/webhooks/wasender/${s.providerSessionId}`;
-      await api.syncSessionWebhook(s.id, url);
-      alert(`Webhook auto-configured successfully on Wasender for "${s.name}" with full events enabled!`);
+      const targetUrl =
+        s.webhookUrl ||
+        (s.provider === "periskope"
+          ? `${window.location.origin}/webhooks/periskope`
+          : `${window.location.origin}/webhooks/wasender/${s.providerSessionId}`);
+      await api.syncSessionWebhook(s.id, targetUrl);
+      const providerLabel = s.provider === "periskope" ? "Periskope" : "Wasender";
+      alert(`Webhook auto-configured successfully on ${providerLabel} for "${s.name}"!`);
     } catch (e) {
-      alert(`Failed to auto-configure webhook on Wasender: ${e}`);
+      alert(`Failed to auto-configure webhook: ${e}`);
     } finally {
       setActionBusy(null);
     }
   }
 
-  function copyWebhook(id: number, providerSessionId: string) {
-    const url = `${window.location.origin}/webhooks/wasender/${providerSessionId}`;
+  function copyWebhook(id: number, url: string) {
     void navigator.clipboard.writeText(url);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
@@ -142,6 +142,12 @@ export function SessionsPage() {
             const isConnected = s.status === "connected";
             const isConnecting = s.status === "connecting" || s.status === "need_scan";
             const isBusy = actionBusy === s.id;
+            const isPeriskope = s.provider === "periskope";
+            const webhookUrl =
+              s.webhookUrl ||
+              (isPeriskope
+                ? `${window.location.origin}/webhooks/periskope`
+                : `${window.location.origin}/webhooks/wasender/${s.providerSessionId}`);
 
             return (
               <li key={s.id} className="wf-row" style={{ display: "block", padding: "1.25rem" }}>
@@ -162,9 +168,33 @@ export function SessionsPage() {
                     <span className="pill-dot" aria-hidden />
                     {s.status.toUpperCase()}
                   </span>
-                  <span style={{ color: "var(--muted)", fontSize: "0.8125rem" }}>
-                    ID: {s.providerSessionId}
+                  <span
+                    className="pill"
+                    style={{
+                      background: isPeriskope ? "rgba(99, 102, 241, 0.15)" : "rgba(16, 185, 129, 0.15)",
+                      color: isPeriskope ? "var(--primary-focus, #6366f1)" : "var(--accent, #10b981)",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {isPeriskope ? "Periskope" : "Wasender"}
                   </span>
+                  <span style={{ color: "var(--muted)", fontSize: "0.8125rem" }}>
+                    {isPeriskope ? `Phone: ${s.providerSessionId}` : `ID: ${s.providerSessionId}`}
+                  </span>
+                  {s.apiKeyMasked && (
+                    <span
+                      style={{
+                        color: "var(--muted)",
+                        fontSize: "0.8125rem",
+                        background: "var(--surface-sunken)",
+                        padding: "0.125rem 0.375rem",
+                        borderRadius: "var(--radius-sm)",
+                      }}
+                      title="Masked provider API key"
+                    >
+                      🔑 {s.apiKeyMasked}
+                    </span>
+                  )}
                   <span style={{ flex: 1 }} />
 
                   {/* Actions */}
@@ -174,7 +204,7 @@ export function SessionsPage() {
                       onClick={() => setQrSession(s)}
                       disabled={isBusy}
                     >
-                      Connect / QR Code
+                      {isPeriskope ? "Check / Connect" : "Connect / QR Code"}
                     </button>
                   ) : (
                     <>
@@ -182,7 +212,7 @@ export function SessionsPage() {
                         className="btn btn-ghost btn-sm"
                         onClick={() => void handleRestart(s)}
                         disabled={isBusy}
-                        title="Restart connection on Wasender"
+                        title={`Restart connection on ${isPeriskope ? "Periskope" : "Wasender"}`}
                       >
                         {isBusy ? "Restarting…" : "Restart"}
                       </button>
@@ -199,9 +229,18 @@ export function SessionsPage() {
 
                   <button
                     className="btn btn-ghost btn-sm"
+                    onClick={() => setEditingSession(s)}
+                    disabled={isBusy}
+                    title="Edit session details & API key"
+                  >
+                    Edit
+                  </button>
+
+                  <button
+                    className="btn btn-ghost btn-sm"
                     onClick={() => void handleCheckStatus(s)}
                     disabled={isBusy}
-                    title="Refresh status from Wasender"
+                    title="Refresh status from provider"
                   >
                     Sync
                   </button>
@@ -231,12 +270,12 @@ export function SessionsPage() {
                 >
                   <span style={{ fontWeight: 500 }}>Webhook URL:</span>
                   <code style={{ fontSize: "0.75rem", flex: 1, wordBreak: "break-all" }}>
-                    {`${window.location.origin}/webhooks/wasender/${s.providerSessionId}`}
+                    {webhookUrl}
                   </code>
                   <button
                     className="btn btn-ghost btn-sm"
                     style={{ padding: "0.125rem 0.5rem", fontSize: "0.75rem" }}
-                    onClick={() => copyWebhook(s.id, s.providerSessionId)}
+                    onClick={() => copyWebhook(s.id, webhookUrl)}
                   >
                     {copiedId === s.id ? "✓ Copied" : "Copy"}
                   </button>
@@ -245,9 +284,13 @@ export function SessionsPage() {
                     style={{ padding: "0.125rem 0.5rem", fontSize: "0.75rem" }}
                     disabled={actionBusy === s.id}
                     onClick={() => void handleSyncWebhook(s)}
-                    title="Auto-register this webhook URL and enable all events on Wasender using your PAT"
+                    title={`Auto-register this webhook URL in ${isPeriskope ? "Periskope" : "Wasender"}`}
                   >
-                    {actionBusy === s.id ? "Configuring…" : "⚡ Auto-Set in Wasender"}
+                    {actionBusy === s.id
+                      ? "Configuring…"
+                      : isPeriskope
+                      ? "⚡ Auto-Set in Periskope"
+                      : "⚡ Auto-Set in Wasender"}
                   </button>
                 </div>
               </li>
@@ -287,7 +330,7 @@ export function SessionsPage() {
           onCreated={(created) => {
             setCreating(false);
             void refresh();
-            if (created) {
+            if (created && created.provider !== "periskope") {
               setQrSession({
                 id: created.id,
                 name: created.name,
@@ -297,6 +340,24 @@ export function SessionsPage() {
             }
           }}
         />
+      </Dialog>
+
+      {/* Edit session */}
+      <Dialog
+        open={editingSession !== null}
+        onClose={() => setEditingSession(null)}
+        labelledBy="edit-session-title"
+      >
+        {editingSession && (
+          <EditSessionModal
+            session={editingSession}
+            onCancel={() => setEditingSession(null)}
+            onSaved={() => {
+              setEditingSession(null);
+              void refresh();
+            }}
+          />
+        )}
       </Dialog>
 
       {/* Delete confirm */}
@@ -483,34 +544,65 @@ function CreateSessionForm({
   onCreated,
 }: {
   onCancel: () => void;
-  onCreated: (created?: {
-    id: number;
-    providerSessionId: string;
-    name: string;
-    status: string;
-  }) => void;
+  onCreated: (created?: SessionItem) => void;
 }) {
+  const [provider, setProvider] = useState<"wasender" | "periskope">("wasender");
   const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [webhookSecret, setWebhookSecret] = useState("");
+  const [fetchingPhones, setFetchingPhones] = useState(false);
+  const [discoveredPhones, setDiscoveredPhones] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setTimeout(() => inputRef.current?.focus(), 0);
-  }, []);
+  }, [provider]);
+
+  async function fetchPhones() {
+    if (!apiKey.trim()) {
+      setError("Please enter a Periskope API Key first to fetch connected phones.");
+      return;
+    }
+    setError(null);
+    setFetchingPhones(true);
+    try {
+      const res = await api.listPeriskopePhones(apiKey.trim());
+      const phones = res.phones.map((p) => p.phone);
+      setDiscoveredPhones(phones);
+      if (phones.length > 0 && !phone) {
+        setPhone(phones[0]);
+      } else if (phones.length === 0) {
+        setError("No connected phones found in this Periskope organization.");
+      }
+    } catch (err) {
+      setError(`Could not fetch phones: ${err}`);
+    } finally {
+      setFetchingPhones(false);
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    const trimmed = name.trim();
-    if (!trimmed || busy) return;
+    const trimmedName = name.trim();
+    if (!trimmedName || busy) return;
+    setError(null);
     setBusy(true);
+
     try {
-      const created = await api.createSession(trimmed);
-      onCreated({
-        id: created.id,
-        providerSessionId: created.providerSessionId,
-        name: trimmed,
-        status: "disconnected",
+      const created = await api.createSession({
+        name: trimmedName,
+        provider,
+        phone: provider === "periskope" ? phone.trim() : undefined,
+        apiKey: apiKey.trim() || undefined,
+        webhookSecret: webhookSecret.trim() || undefined,
+        providerConfig: provider === "periskope" ? { orgPhone: phone.trim() } : undefined,
       });
+      onCreated(created);
+    } catch (err) {
+      setError(String(err));
     } finally {
       setBusy(false);
     }
@@ -519,9 +611,45 @@ function CreateSessionForm({
   return (
     <form className="modal-body" onSubmit={submit}>
       <p className="modal-title">Add a WhatsApp session</p>
-      <p className="page-subtitle" style={{ margin: "0.25rem 0 1.25rem" }}>
-        Created on Wasender with its webhook pointed at this app.
+      <p className="page-subtitle" style={{ margin: "0.25rem 0 1rem" }}>
+        Select your underlying transport provider and connect numbers.
       </p>
+
+      {error && (
+        <div className="error-banner" style={{ marginBottom: "1rem" }}>
+          {error}
+        </div>
+      )}
+
+      {/* Provider Selector Tabs */}
+      <div
+        style={{
+          display: "flex",
+          gap: "0.5rem",
+          background: "var(--surface-sunken)",
+          padding: "0.25rem",
+          borderRadius: "var(--radius-sm)",
+          marginBottom: "1rem",
+        }}
+      >
+        <button
+          type="button"
+          className={`btn btn-sm ${provider === "wasender" ? "btn-primary" : "btn-ghost"}`}
+          style={{ flex: 1 }}
+          onClick={() => setProvider("wasender")}
+        >
+          Wasender (QR Code)
+        </button>
+        <button
+          type="button"
+          className={`btn btn-sm ${provider === "periskope" ? "btn-primary" : "btn-ghost"}`}
+          style={{ flex: 1 }}
+          onClick={() => setProvider("periskope")}
+        >
+          Periskope (API & Phone)
+        </button>
+      </div>
+
       <label className="field-label" htmlFor="session-name">
         Session name
       </label>
@@ -529,17 +657,183 @@ function CreateSessionForm({
         ref={inputRef}
         id="session-name"
         className="input"
-        placeholder='e.g. "Sales number"'
+        placeholder='e.g. "Sales Desk 1"'
         value={name}
         onChange={(e) => setName(e.target.value)}
         required
       />
-      <div className="modal-actions">
-        <button type="button" className="btn" onClick={() => onCancel()}>
+
+      {provider === "periskope" && (
+        <>
+          <label className="field-label" htmlFor="periskope-api-key" style={{ marginTop: "0.75rem" }}>
+            Periskope API Key
+          </label>
+          <input
+            id="periskope-api-key"
+            type="text"
+            className="input"
+            placeholder="prsk_live_..."
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            required
+          />
+
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "0.75rem" }}>
+            <label className="field-label" htmlFor="periskope-phone" style={{ margin: 0 }}>
+              Connected Phone Number
+            </label>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              style={{ fontSize: "0.75rem" }}
+              disabled={fetchingPhones || !apiKey.trim()}
+              onClick={fetchPhones}
+            >
+              {fetchingPhones ? "Fetching…" : "🔍 Discover Phones"}
+            </button>
+          </div>
+
+          {discoveredPhones.length > 0 ? (
+            <select
+              id="periskope-phone"
+              className="input"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              required
+            >
+              <option value="">Select a connected phone…</option>
+              {discoveredPhones.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              id="periskope-phone"
+              className="input"
+              placeholder="+1234567890"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              required
+            />
+          )}
+
+          <label className="field-label" htmlFor="periskope-webhook-secret" style={{ marginTop: "0.75rem" }}>
+            Webhook Signing Secret (Optional HMAC verification)
+          </label>
+          <input
+            id="periskope-webhook-secret"
+            type="text"
+            className="input"
+            placeholder="whsec_..."
+            value={webhookSecret}
+            onChange={(e) => setWebhookSecret(e.target.value)}
+          />
+        </>
+      )}
+
+      <div className="modal-actions" style={{ marginTop: "1.25rem" }}>
+        <button type="button" className="btn" onClick={onCancel}>
           Cancel
         </button>
         <button type="submit" className="btn btn-primary" disabled={!name.trim() || busy}>
-          {busy ? "Creating…" : "Create & Connect"}
+          {busy ? "Creating…" : provider === "periskope" ? "Save Session" : "Create & Connect"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function EditSessionModal({
+  session,
+  onCancel,
+  onSaved,
+}: {
+  session: SessionRow;
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(session.name);
+  const [apiKey, setApiKey] = useState("");
+  const [webhookSecret, setWebhookSecret] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim() || busy) return;
+    setError(null);
+    setBusy(true);
+
+    try {
+      await api.patchSession(session.id, {
+        name: name.trim(),
+        apiKey: apiKey.trim() || undefined,
+        webhookSecret: webhookSecret.trim() || undefined,
+      });
+      onSaved();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="modal-body" onSubmit={submit}>
+      <p className="modal-title">Edit Session</p>
+      <p className="page-subtitle" style={{ margin: "0.25rem 0 1rem" }}>
+        Update credentials or session settings. Active workflows remain unaffected.
+      </p>
+
+      {error && (
+        <div className="error-banner" style={{ marginBottom: "1rem" }}>
+          {error}
+        </div>
+      )}
+
+      <label className="field-label" htmlFor="edit-session-name">
+        Session Name
+      </label>
+      <input
+        id="edit-session-name"
+        className="input"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        required
+      />
+
+      <label className="field-label" htmlFor="edit-session-api-key" style={{ marginTop: "0.75rem" }}>
+        Update API Key {session.apiKeyMasked && `(Current: ${session.apiKeyMasked})`}
+      </label>
+      <input
+        id="edit-session-api-key"
+        type="text"
+        className="input"
+        placeholder="Leave blank to keep existing key"
+        value={apiKey}
+        onChange={(e) => setApiKey(e.target.value)}
+      />
+
+      <label className="field-label" htmlFor="edit-session-secret" style={{ marginTop: "0.75rem" }}>
+        Update Webhook Secret {session.webhookSecretMasked && `(Current: ${session.webhookSecretMasked})`}
+      </label>
+      <input
+        id="edit-session-secret"
+        type="text"
+        className="input"
+        placeholder="Leave blank to keep existing secret"
+        value={webhookSecret}
+        onChange={(e) => setWebhookSecret(e.target.value)}
+      />
+
+      <div className="modal-actions" style={{ marginTop: "1.25rem" }}>
+        <button type="button" className="btn" onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="submit" className="btn btn-primary" disabled={busy || !name.trim()}>
+          {busy ? "Saving…" : "Save Changes"}
         </button>
       </div>
     </form>

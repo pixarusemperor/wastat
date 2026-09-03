@@ -290,3 +290,19 @@ CREATE TABLE IF NOT EXISTS group_dispatches (
 );
 
 CREATE INDEX IF NOT EXISTS idx_group_dispatches_poll ON group_dispatches (status, priority, run_at);
+
+-- 22. Multi-Provider WhatsApp Translation Layer (Wasender & Periskope)
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'wasender';
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS provider_config JSONB DEFAULT '{}';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_provider_scoping ON sessions(provider, provider_session_id);
+
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS queue_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_messages_queue_id ON messages (queue_id);
+
+CREATE TABLE IF NOT EXISTS webhook_idempotency (
+  id         BIGSERIAL PRIMARY KEY,
+  provider   TEXT NOT NULL,
+  event_id   TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(provider, event_id)
+);

@@ -2,11 +2,11 @@
 
 This repository uses a **single-context** layout.
 
-- Domain language: `CONTEXT.md` at the repo root.
-- Architectural decisions: `docs/adr/` at the repo root.
+- Domain language & architecture SSOT: `CONTEXT.md` at the repo root.
+- Architectural Decision Records: `docs/adr/` at the repo root.
 
-## Consumer rules
+## Consumer Rules
 
-- Skills that need domain context (`improve-codebase-architecture`, `diagnose`, `tdd`) read `CONTEXT.md` first.
-- Record significant architectural decisions as ADRs in `docs/adr/`.
-- If this repo grows into a monorepo, switch to a `CONTEXT-MAP.md` multi-context layout.
+- Skills that need domain context (`improve-codebase-architecture`, `diagnose`, `tdd`, `domain-modeling`) read `CONTEXT.md` first.
+- Record significant architectural decisions as ADRs in `docs/adr/` numbered sequentially (`0001-...`, `0002-...`, etc.).
+- Maintain strict tracer-bullet vertical slice isolation across monorepo packages (`@wastat/shared`, `@wastat/server`, `@wastat/web`, `@wastat/mcp-server`).

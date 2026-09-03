@@ -138,8 +138,15 @@ export interface BroadcastSummary {
 export interface SessionItem {
   id: number;
   name: string;
+  provider?: "wasender" | "periskope";
   providerSessionId: string;
   status: string;
+  apiKeyMasked?: string | null;
+  hasApiKey?: boolean;
+  webhookUrl?: string;
+  webhookSecretMasked?: string | null;
+  providerConfig?: Record<string, unknown>;
+  createdAt?: string;
 }
 
 export const api = {
@@ -251,12 +258,50 @@ export const api = {
     fetch("/api/sessions").then((r) =>
       json<SessionItem[]>(r),
     ),
-  createSession: (name: string) =>
-    fetch("/api/sessions", {
+  createSession: (
+    data:
+      | {
+          name: string;
+          provider?: "wasender" | "periskope";
+          phone?: string;
+          providerSessionId?: string;
+          apiKey?: string;
+          webhookSecret?: string;
+          providerConfig?: Record<string, unknown>;
+        }
+      | string,
+  ) => {
+    const payload = typeof data === "string" ? { name: data } : data;
+    return fetch("/api/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    }).then((r) => json<{ id: number; providerSessionId: string }>(r)),
+      body: JSON.stringify(payload),
+    }).then((r) => json<SessionItem>(r));
+  },
+  patchSession: (
+    id: number,
+    data: {
+      name?: string;
+      provider?: "wasender" | "periskope";
+      providerSessionId?: string;
+      apiKey?: string;
+      webhookSecret?: string;
+      providerConfig?: Record<string, unknown>;
+    },
+  ) =>
+    fetch(`/api/sessions/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }).then((r) => json<SessionItem>(r)),
+  listPeriskopePhones: (apiKey?: string, sessionId?: number) => {
+    const params = new URLSearchParams();
+    if (apiKey) params.set("apiKey", apiKey);
+    if (sessionId) params.set("sessionId", String(sessionId));
+    return fetch(`/api/providers/periskope/phones?${params.toString()}`).then((r) =>
+      json<{ phones: Array<{ phone: string; name?: string; status?: string }> }>(r),
+    );
+  },
   connectSession: (id: number) =>
     fetch(`/api/sessions/${id}/connect`, { method: "POST" }).then((r) =>
       json<{ ok: boolean; status: string }>(r),

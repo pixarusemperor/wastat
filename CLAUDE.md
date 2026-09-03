@@ -22,6 +22,22 @@ This file defines the operating instructions, architecture contracts, commands, 
 
 ---
 
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked on GitHub Issues at `pixarusemperor/wastat` using the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Canonical triage state machine labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout using root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.
+
+---
+
 ## 🚦 Task Orchestration (Matt Pocock Style)
 - Source of truth: `TASKS.md`.
 - Always pick tasks labeled `READY_FOR_AGENT`.

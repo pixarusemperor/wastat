@@ -4,12 +4,17 @@
 CREATE TABLE IF NOT EXISTS sessions (
   id                  INTEGER PRIMARY KEY,
   name                TEXT NOT NULL,
-  provider_session_id TEXT NOT NULL UNIQUE,
+  provider            TEXT NOT NULL DEFAULT 'wasender',
+  provider_session_id TEXT NOT NULL,
   status              TEXT NOT NULL DEFAULT 'disconnected',
   api_key_encrypted   BLOB,
   webhook_secret      TEXT,
-  created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  provider_config     TEXT DEFAULT '{}',
+  created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  UNIQUE(provider, provider_session_id)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_provider_scoping ON sessions(provider, provider_session_id);
 
 CREATE TABLE IF NOT EXISTS contacts (
   id               INTEGER PRIMARY KEY,
@@ -143,6 +148,7 @@ CREATE TABLE IF NOT EXISTS messages (
   text                  TEXT,
   media_id              INTEGER REFERENCES media_assets(id),
   provider_message_id   TEXT UNIQUE,
+  queue_id              TEXT,
   in_reply_to_id        INTEGER REFERENCES messages(id),
   workflow_execution_id INTEGER REFERENCES workflow_executions(id),
   node_key              TEXT,
@@ -155,6 +161,15 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages (session_id, contact_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_messages_execution    ON messages (workflow_execution_id);
+CREATE INDEX IF NOT EXISTS idx_messages_queue_id     ON messages (queue_id);
+
+CREATE TABLE IF NOT EXISTS webhook_idempotency (
+  id         INTEGER PRIMARY KEY,
+  provider   TEXT NOT NULL,
+  event_id   TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  UNIQUE(provider, event_id)
+);
 
 CREATE TABLE IF NOT EXISTS workflow_executions (
   id                 INTEGER PRIMARY KEY,

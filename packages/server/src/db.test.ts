@@ -103,3 +103,54 @@ describe("A/B Option C schema (experiment owns trigger + experiment_variants)", 
     db.close();
   });
 });
+
+describe("Multi-Provider WhatsApp Translation Layer schema (Wasender & Periskope)", () => {
+  it("exposes provider, provider_config, queue_id and webhook_idempotency table", () => {
+    const db = new Database(":memory:");
+    applySqliteSchema(db);
+
+    const sessionCols = db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string; dflt_value: string }>;
+    const sessionColNames = sessionCols.map((c) => c.name);
+    expect(sessionColNames).toContain("provider");
+    expect(sessionColNames).toContain("provider_config");
+
+    const messageCols = db.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>;
+    const messageColNames = messageCols.map((c) => c.name);
+    expect(messageColNames).toContain("queue_id");
+
+    const idempotencyCols = db.prepare("PRAGMA table_info(webhook_idempotency)").all() as Array<{ name: string }>;
+    expect(idempotencyCols.map((c) => c.name)).toEqual(["id", "provider", "event_id", "created_at"]);
+
+    // Test default values on session insertion
+    const info = db.prepare("INSERT INTO sessions (name, provider_session_id) VALUES ('Default Session', 'sess_123')").run();
+    const sessionRow = db.prepare("SELECT provider, provider_config FROM sessions WHERE id = ?").get(info.lastInsertRowid) as {
+      provider: string;
+      provider_config: string;
+    };
+    expect(sessionRow.provider).toBe("wasender");
+    expect(sessionRow.provider_config).toBe("{}");
+
+    // Test composite provider scoping: same provider_session_id on different providers allowed
+    expect(() => {
+      db.prepare("INSERT INTO sessions (name, provider, provider_session_id) VALUES ('Periskope Session', 'periskope', 'sess_123')").run();
+    }).not.toThrow();
+
+    // Duplicate provider_session_id on SAME provider is rejected
+    expect(() => {
+      db.prepare("INSERT INTO sessions (name, provider, provider_session_id) VALUES ('Duplicate Wasender', 'wasender', 'sess_123')").run();
+    }).toThrow();
+
+    // Test webhook_idempotency uniqueness constraint
+    db.prepare("INSERT INTO webhook_idempotency (provider, event_id) VALUES ('periskope', 'evt_1')").run();
+    expect(() => {
+      db.prepare("INSERT INTO webhook_idempotency (provider, event_id) VALUES ('periskope', 'evt_1')").run();
+    }).toThrow();
+    // Different provider with same event_id is allowed
+    expect(() => {
+      db.prepare("INSERT INTO webhook_idempotency (provider, event_id) VALUES ('wasender', 'evt_1')").run();
+    }).not.toThrow();
+
+    db.close();
+  });
+});
+

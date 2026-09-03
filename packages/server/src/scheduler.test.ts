@@ -177,4 +177,71 @@ describe("scheduler", () => {
     await sched.tick();
     expect(sent.length).toBe(1);
   });
+
+  it("preempts bulk jobs (priority 2) with 1-on-1 customer chats (priority 1)", async () => {
+    const db = setup();
+    const clock = new FakeClock();
+    const executedOrder: number[] = [];
+    const sched = createScheduler(
+      db,
+      async (job) => {
+        executedOrder.push(job.id);
+      },
+      clock,
+    );
+
+    const a = seedExecution(db, "A");
+    const b = seedExecution(db, "B");
+
+    const runAt = new Date(10_000);
+    // Enqueue bulk broadcast first (priority 2)
+    const bulkJobId = await sched.enqueue({
+      type: "send_message",
+      executionId: a.executionId,
+      priority: 2,
+      runAt,
+    });
+
+    // Enqueue 1-on-1 direct customer chat second (priority 1)
+    const directChatJobId = await sched.enqueue({
+      type: "send_message",
+      executionId: b.executionId,
+      priority: 1,
+      runAt,
+    });
+
+    clock.advance(10_000);
+    await sched.tick();
+
+    // Priority 1 must execute before Priority 2!
+    expect(executedOrder[0]).toBe(directChatJobId);
+    expect(executedOrder[1]).toBe(bulkJobId);
+  });
+
+  it("retries 429 rate limit errors with fast backoff (2s) instead of 30s", async () => {
+    const db = setup();
+    const clock = new FakeClock();
+    let attemptsCount = 0;
+    const sched = createScheduler(
+      db,
+      async () => {
+        attemptsCount++;
+        throw { status: 429, message: "Periskope rate limit exceeded" };
+      },
+      clock,
+    );
+
+    const { executionId } = seedExecution(db, "A");
+    const jobId = await sched.enqueue({ type: "send_message", executionId });
+
+    await sched.tick();
+    expect(attemptsCount).toBe(1);
+
+    const jobRow = db.prepare("SELECT run_at, attempts, status FROM jobs WHERE id = ?").get(jobId) as any;
+    expect(jobRow.attempts).toBe(1);
+    expect(jobRow.status).toBe("pending");
+    // run_at should be clock.now() + 2,000ms (not +30,000ms)
+    expect(new Date(jobRow.run_at).getTime()).toBe(2_000);
+  });
 });
+

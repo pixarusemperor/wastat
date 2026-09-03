@@ -65,16 +65,16 @@ export async function executeLiveCrossInstanceTrigger() {
 
   // 1. Sync Sessions into local database
   db.prepare(`
-    INSERT INTO sessions (name, provider_session_id, status, api_key_encrypted)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(provider_session_id) DO UPDATE SET
+    INSERT INTO sessions (name, provider, provider_session_id, status, api_key_encrypted)
+    VALUES (?, 'wasender', ?, ?, ?)
+    ON CONFLICT(provider, provider_session_id) DO UPDATE SET
       name = excluded.name, status = excluded.status, api_key_encrypted = excluded.api_key_encrypted
   `).run(safari.name, String(safari.id), safari.status, Buffer.from(safari.api_key, "utf8"));
 
   db.prepare(`
-    INSERT INTO sessions (name, provider_session_id, status, api_key_encrypted)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(provider_session_id) DO UPDATE SET
+    INSERT INTO sessions (name, provider, provider_session_id, status, api_key_encrypted)
+    VALUES (?, 'wasender', ?, ?, ?)
+    ON CONFLICT(provider, provider_session_id) DO UPDATE SET
       name = excluded.name, status = excluded.status, api_key_encrypted = excluded.api_key_encrypted
   `).run(patrick.name, String(patrick.id), patrick.status, Buffer.from(patrick.api_key, "utf8"));
 

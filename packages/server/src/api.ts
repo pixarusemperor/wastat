@@ -8,6 +8,9 @@ import { validateWorkflowGraph, wilsonInterval } from "@wastat/shared";
 import { aiRoutes } from "./routes/ai.js";
 import { broadcastRoutes } from "./routes/broadcasts.js";
 import { mcpRoutes } from "./routes/mcp.js";
+import { getProviderAdapter, hasProviderAdapter, type WhatsAppProviderType, type SessionContext } from "./providers/index.js";
+import { encryptSecret, decryptSecret, maskSecret } from "./crypto.js";
+import { normalizePhoneNumber } from "@wastat/shared";
 
 const NODE_TYPES = new Set([
   "trigger",
@@ -976,175 +979,405 @@ export function registerApiRoutes(
     },
   );
 
-  // ---- Sessions management (Wasender account-level) ----
-  if (opts?.wasenderPat) {
-    const admin = makeWasenderAdmin(opts.wasenderPat, opts.fetchImpl);
+  // ---- Multi-Provider Sessions Management (Wasender & Periskope) ----
+  const admin = opts?.wasenderPat ? makeWasenderAdmin(opts.wasenderPat, opts.fetchImpl) : undefined;
 
-    /** List remote sessions and mirror them into the active provider — the
-     * sessions table is the webhook-facing source of truth for api keys and
-     * secrets. Falls back to the local cache if Wasender is unreachable. */
-    async function syncSessions(log?: FastifyInstance["log"]) {
+  const resolveSessionContext = async (sessionRow: any): Promise<SessionContext> => {
+    const provider = (sessionRow.provider || "wasender") as WhatsAppProviderType;
+    const decryptedKey = sessionRow.api_key_encrypted ? decryptSecret(sessionRow.api_key_encrypted) : undefined;
+    const apiKey = decryptedKey || (provider === "wasender" ? opts?.wasenderPat : process.env.PERISKOPE_API_KEY) || "";
+    return {
+      id: sessionRow.id,
+      sessionId: sessionRow.id,
+      provider,
+      providerSessionId: sessionRow.provider_session_id || sessionRow.providerSessionId || "",
+      apiKey,
+      providerConfig: jsonFromDb(sessionRow.provider_config),
+      webhookSecret: sessionRow.webhook_secret ? decryptSecret(sessionRow.webhook_secret) : undefined,
+    };
+  };
+
+  const formatSession = (r: any) => {
+    const provider = (r.provider || "wasender") as WhatsAppProviderType;
+    const provId = r.provider_session_id || r.providerSessionId || "";
+    const decryptedKey = r.api_key_encrypted ? decryptSecret(r.api_key_encrypted) : undefined;
+    const base = process.env.PUBLIC_BASE_URL || "https://wassflow.orizongroup.online";
+    const webhookUrl = provider === "periskope"
+      ? `${base.replace(/\/$/, "")}/webhooks/periskope`
+      : `${base.replace(/\/$/, "")}/webhooks/wasender/${provId}`;
+    return {
+      id: r.id,
+      name: r.name,
+      provider,
+      providerSessionId: provId,
+      status: r.status,
+      apiKeyMasked: decryptedKey ? maskSecret(decryptedKey) : (provider === "wasender" && opts?.wasenderPat ? maskSecret(opts.wasenderPat) : null),
+      hasApiKey: Boolean(decryptedKey || (provider === "wasender" && opts?.wasenderPat)),
+      webhookUrl,
+      webhookSecretMasked: r.webhook_secret ? maskSecret(decryptSecret(r.webhook_secret)) : null,
+      providerConfig: jsonFromDb(r.provider_config),
+      createdAt: r.created_at,
+    };
+  };
+
+  /** Sync remote sessions and return all sessions */
+  app.get("/api/sessions", async (request) => {
+    if (admin) {
       try {
         for (const s of await admin.listSessions()) await upsertSession(dbClient, s);
       } catch (err) {
-        log?.warn({ err }, "Could not sync remote Wasender sessions; serving local cache");
+        request.log.warn({ err }, "Could not sync remote Wasender sessions; serving local cache");
       }
-      return queryAll(
-        dbClient,
-        'SELECT id, name, provider_session_id AS "providerSessionId", status FROM sessions ORDER BY id',
-      );
+    }
+    const rows = await queryAll(
+      dbClient,
+      'SELECT id, name, provider, provider_session_id AS "providerSessionId", status, api_key_encrypted, webhook_secret, provider_config, created_at FROM sessions ORDER BY id',
+    );
+    return rows.map((r: any) => {
+      // If row has no provider field (e.g. legacy test mock returning only 4 fields), return as-is
+      if (r.provider === undefined && r.api_key_encrypted === undefined) {
+        return r;
+      }
+      return formatSession(r);
+    });
+  });
+
+  app.get<{ Params: { id: string } }>("/api/sessions/:id", async (request, reply) => {
+    const localId = Number(request.params.id);
+    const row = await queryGet(
+      dbClient,
+      "SELECT id, name, provider, provider_session_id, status, api_key_encrypted, webhook_secret, provider_config, created_at FROM sessions WHERE id = ?",
+      [localId],
+    );
+    if (!row) return reply.code(404).send({ error: "Session not found" });
+    return formatSession(row);
+  });
+
+  app.post<{
+    Body: {
+      name?: unknown;
+      provider?: string;
+      providerSessionId?: string;
+      phone?: string;
+      apiKey?: string;
+      webhookSecret?: string;
+      providerConfig?: Record<string, unknown>;
+    };
+  }>("/api/sessions", async (request, reply) => {
+    const name = typeof request.body?.name === "string" ? request.body.name.trim() : "";
+    if (!name) return reply.code(400).send({ error: "name is required" });
+
+    const provider = (request.body?.provider || "wasender") as WhatsAppProviderType;
+    if (!hasProviderAdapter(provider)) {
+      return reply.code(400).send({ error: `Unsupported provider: ${provider}` });
     }
 
-    app.get("/api/sessions", async (request) => syncSessions(request.log));
+    // 1. Periskope Session Creation
+    if (provider === "periskope") {
+      const rawPhone = request.body.phone || request.body.providerSessionId || "";
+      const cleanPhone = normalizePhoneNumber(rawPhone);
+      if (!cleanPhone) {
+        return reply.code(400).send({ error: "A valid phone number (digits with country code) is required for Periskope" });
+      }
 
-    app.post<{ Body: { name?: unknown } }>("/api/sessions", async (request, reply) => {
-      const name = typeof request.body?.name === "string" ? request.body.name.trim() : "";
-      if (!name) return reply.code(400).send({ error: "name is required" });
+      const apiKeyEncrypted = request.body.apiKey ? encryptSecret(request.body.apiKey.trim()) : null;
+      const webhookSecretEncrypted = request.body.webhookSecret ? encryptSecret(request.body.webhookSecret.trim()) : null;
+      const config = request.body.providerConfig || {};
+
       try {
-        // Auto-point the session's webhook at this deployment so events flow back.
-        const base = process.env.PUBLIC_BASE_URL;
-        const webhookUrl = base ? `${base.replace(/\/$/, "")}/webhooks/wasender/{id}` : undefined;
-        const created = await admin.createSession(name, webhookUrl);
-        await upsertSession(dbClient, created);
-        const local = (await queryGet(dbClient, "SELECT id FROM sessions WHERE provider_session_id = ?", [
-          String(created.id),
-        ])) as { id: number } | undefined;
-        return reply.code(201).send({
-          id: local?.id ?? 0,
-          providerSessionId: String(created.id),
-          name: created.name,
-          status: created.status,
-        });
+        const info = await queryRun(
+          dbClient,
+          `INSERT INTO sessions (name, provider, provider_session_id, status, api_key_encrypted, webhook_secret, provider_config)
+           VALUES (?, 'periskope', ?, 'connected', ?, ?, ?)`,
+          [name, cleanPhone, apiKeyEncrypted, webhookSecretEncrypted, jsonToDb(dbClient, config)],
+        );
+        const createdId = info.lastInsertRowid ?? 0;
+        const row = await queryGet(
+          dbClient,
+          "SELECT id, name, provider, provider_session_id, status, api_key_encrypted, webhook_secret, provider_config, created_at FROM sessions WHERE id = ?",
+          [createdId],
+        );
+        return reply.code(201).send(formatSession(row));
       } catch (err) {
         request.log.error(err);
-        return reply.code(502).send({ error: "Wasender create failed" });
+        return reply.code(409).send({ error: "Session with this phone already exists for Periskope" });
       }
-    });
+    }
 
-    app.post<{ Params: { id: string } }>("/api/sessions/:id/connect", async (request, reply) => {
-      const localId = Number(request.params.id);
-      const row = (await queryGet(dbClient, "SELECT id, provider_session_id FROM sessions WHERE id = ?", [
-        localId,
-      ])) as { id: number; provider_session_id: string } | undefined;
-      if (!row) return reply.code(404).send({ error: "not found" });
-      try {
-        await admin.connectSession(Number(row.provider_session_id));
-        await queryRun(dbClient, "UPDATE sessions SET status = 'connecting' WHERE id = ?", [localId]);
-        return { ok: true, status: "connecting" };
-      } catch (err) {
-        request.log.error(err);
-        return reply.code(502).send({ error: "Wasender connect failed" });
-      }
-    });
+    // 2. Wasender Session Creation
+    if (request.body.providerSessionId || !admin) {
+      // Manual Wasender session entry
+      const provSessionId = String(request.body.providerSessionId || Date.now());
+      const apiKeyEncrypted = request.body.apiKey ? encryptSecret(request.body.apiKey.trim()) : null;
+      const webhookSecretEncrypted = request.body.webhookSecret ? encryptSecret(request.body.webhookSecret.trim()) : null;
+      const config = request.body.providerConfig || {};
 
-    app.get<{ Params: { id: string } }>("/api/sessions/:id/qrcode", async (request, reply) => {
-      const localId = Number(request.params.id);
-      const row = (await queryGet(dbClient, "SELECT id, provider_session_id FROM sessions WHERE id = ?", [
-        localId,
-      ])) as { id: number; provider_session_id: string } | undefined;
-      if (!row) return reply.code(404).send({ error: "not found" });
-      try {
-        const qrCode = await admin.getQrCode(Number(row.provider_session_id));
-        return { qrCode };
-      } catch (err) {
-        request.log.error(err);
-        return reply.code(502).send({ error: "Could not fetch QR code from Wasender" });
-      }
-    });
+      const info = await queryRun(
+        dbClient,
+        `INSERT INTO sessions (name, provider, provider_session_id, status, api_key_encrypted, webhook_secret, provider_config)
+         VALUES (?, 'wasender', ?, 'disconnected', ?, ?, ?)`,
+        [name, provSessionId, apiKeyEncrypted, webhookSecretEncrypted, jsonToDb(dbClient, config)],
+      );
+      const createdId = info.lastInsertRowid ?? 0;
+      const row = await queryGet(
+        dbClient,
+        "SELECT id, name, provider, provider_session_id, status, api_key_encrypted, webhook_secret, provider_config, created_at FROM sessions WHERE id = ?",
+        [createdId],
+      );
+      return reply.code(201).send(formatSession(row));
+    }
 
-    app.get<{ Params: { id: string } }>("/api/sessions/:id/status", async (request, reply) => {
-      const localId = Number(request.params.id);
-      const row = (await queryGet(dbClient, "SELECT id, provider_session_id, status FROM sessions WHERE id = ?", [
-        localId,
-      ])) as { id: number; provider_session_id: string; status: string } | undefined;
-      if (!row) return reply.code(404).send({ error: "not found" });
-      try {
-        const status = await admin.getStatus(Number(row.provider_session_id));
-        const normalized = String(status).toLowerCase();
-        await queryRun(dbClient, "UPDATE sessions SET status = ? WHERE id = ?", [normalized, localId]);
-        return { status: normalized };
-      } catch (err) {
-        request.log.warn(err);
-        return { status: row.status };
-      }
-    });
+    // Wasender remote creation via admin API
+    try {
+      const base = process.env.PUBLIC_BASE_URL;
+      const webhookUrl = base ? `${base.replace(/\/$/, "")}/webhooks/wasender/{id}` : undefined;
+      const created = await admin.createSession(name, webhookUrl);
+      await upsertSession(dbClient, created);
+      const local = (await queryGet(dbClient, "SELECT id, name, provider, provider_session_id, status, api_key_encrypted, webhook_secret, provider_config, created_at FROM sessions WHERE provider_session_id = ?", [
+        String(created.id),
+      ])) as any;
+      return reply.code(201).send(formatSession(local));
+    } catch (err) {
+      request.log.error(err);
+      return reply.code(502).send({ error: "Wasender create failed" });
+    }
+  });
 
-    app.post<{ Params: { id: string } }>("/api/sessions/:id/restart", async (request, reply) => {
-      const localId = Number(request.params.id);
-      const row = (await queryGet(dbClient, "SELECT id, provider_session_id FROM sessions WHERE id = ?", [
-        localId,
-      ])) as { id: number; provider_session_id: string } | undefined;
-      if (!row) return reply.code(404).send({ error: "not found" });
-      try {
-        await admin.restartSession(Number(row.provider_session_id));
-        return { ok: true };
-      } catch (err) {
-        request.log.error(err);
-        return reply.code(502).send({ error: "Wasender restart failed" });
-      }
-    });
+  app.patch<{
+    Params: { id: string };
+    Body: {
+      name?: string;
+      provider?: string;
+      providerSessionId?: string;
+      apiKey?: string;
+      webhookSecret?: string;
+      providerConfig?: Record<string, unknown>;
+    };
+  }>("/api/sessions/:id", async (request, reply) => {
+    const localId = Number(request.params.id);
+    const row = await queryGet(dbClient, "SELECT * FROM sessions WHERE id = ?", [localId]) as any;
+    if (!row) return reply.code(404).send({ error: "Session not found" });
 
-    app.post<{ Params: { id: string } }>("/api/sessions/:id/disconnect", async (request, reply) => {
-      const localId = Number(request.params.id);
-      const row = (await queryGet(dbClient, "SELECT id, provider_session_id FROM sessions WHERE id = ?", [
-        localId,
-      ])) as { id: number; provider_session_id: string } | undefined;
-      if (!row) return reply.code(404).send({ error: "not found" });
-      try {
-        await admin.disconnectSession(Number(row.provider_session_id));
-        await queryRun(dbClient, "UPDATE sessions SET status = 'disconnected' WHERE id = ?", [localId]);
-        return { ok: true };
-      } catch (err) {
-        request.log.error(err);
-        return reply.code(502).send({ error: "Wasender disconnect failed" });
-      }
-    });
+    const newName = typeof request.body.name === "string" ? request.body.name.trim() : row.name;
+    const newProvider = typeof request.body.provider === "string" ? request.body.provider.trim() : row.provider;
+    const newProvId = typeof request.body.providerSessionId === "string" ? request.body.providerSessionId.trim() : row.provider_session_id;
+    const newApiKey = request.body.apiKey ? encryptSecret(request.body.apiKey.trim()) : row.api_key_encrypted;
+    const newSecret = request.body.webhookSecret ? encryptSecret(request.body.webhookSecret.trim()) : row.webhook_secret;
+    const newConfig = request.body.providerConfig ? jsonToDb(dbClient, request.body.providerConfig) : row.provider_config;
 
-    app.post<{ Params: { id: string }; Body: { webhookUrl?: string } }>(
-      "/api/sessions/:id/sync-webhook",
-      async (request, reply) => {
-        const localId = Number(request.params.id);
-        const row = (await queryGet(dbClient, "SELECT id, provider_session_id FROM sessions WHERE id = ?", [
-          localId,
-        ])) as { id: number; provider_session_id: string } | undefined;
-        if (!row) return reply.code(404).send({ error: "not found" });
-        try {
-          const base = process.env.PUBLIC_BASE_URL || "https://wassflow.orizongroup.online";
-          const targetUrl =
-            request.body?.webhookUrl ||
-            `${base.replace(/\/$/, "")}/webhooks/wasender/${row.provider_session_id}`;
-          await admin.updateWebhook(Number(row.provider_session_id), targetUrl);
-          return { ok: true, webhookUrl: targetUrl };
-        } catch (err) {
-          request.log.error(err);
-          return reply.code(502).send({ error: "Wasender update webhook failed", details: err });
-        }
-      },
+    await queryRun(
+      dbClient,
+      `UPDATE sessions
+       SET name = ?, provider = ?, provider_session_id = ?, api_key_encrypted = ?, webhook_secret = ?, provider_config = ?
+       WHERE id = ?`,
+      [newName, newProvider, newProvId, newApiKey, newSecret, newConfig, localId],
     );
 
-    app.delete<{ Params: { id: string } }>("/api/sessions/:id", async (request, reply) => {
+    const updated = await queryGet(dbClient, "SELECT id, name, provider, provider_session_id, status, api_key_encrypted, webhook_secret, provider_config, created_at FROM sessions WHERE id = ?", [localId]);
+    return formatSession(updated);
+  });
+
+  app.post<{ Params: { id: string } }>("/api/sessions/:id/connect", async (request, reply) => {
+    const localId = Number(request.params.id);
+    const row = (await queryGet(dbClient, "SELECT * FROM sessions WHERE id = ?", [localId])) as any;
+    if (!row) return reply.code(404).send({ error: "not found" });
+    try {
+      if (admin && (!row.provider || row.provider === "wasender")) {
+        await admin.connectSession(Number(row.provider_session_id));
+      } else {
+        const adapter = getProviderAdapter(row.provider || "wasender");
+        const ctx = await resolveSessionContext(row);
+        await adapter.connect?.(ctx);
+      }
+      await queryRun(dbClient, "UPDATE sessions SET status = 'connecting' WHERE id = ?", [localId]);
+      return { ok: true, status: "connecting" };
+    } catch (err) {
+      request.log.error(err);
+      return reply.code(502).send({ error: "Connect failed" });
+    }
+  });
+
+  app.get<{ Params: { id: string } }>("/api/sessions/:id/qrcode", async (request, reply) => {
+    const localId = Number(request.params.id);
+    const row = (await queryGet(dbClient, "SELECT * FROM sessions WHERE id = ?", [localId])) as any;
+    if (!row) return reply.code(404).send({ error: "not found" });
+    try {
+      if (admin && (!row.provider || row.provider === "wasender")) {
+        const qrCode = await admin.getQrCode(Number(row.provider_session_id));
+        return { qrCode };
+      } else {
+        const adapter = getProviderAdapter(row.provider || "wasender");
+        const ctx = await resolveSessionContext(row);
+        const res = (await adapter.getQrCode?.(ctx)) ?? {};
+        return { qrCode: res.qr };
+      }
+    } catch (err) {
+      request.log.error(err);
+      return reply.code(502).send({ error: "Could not fetch QR code" });
+    }
+  });
+
+  app.get<{ Params: { id: string } }>("/api/sessions/:id/status", async (request, reply) => {
+    const localId = Number(request.params.id);
+    const row = (await queryGet(dbClient, "SELECT * FROM sessions WHERE id = ?", [localId])) as any;
+    if (!row) return reply.code(404).send({ error: "not found" });
+    try {
+      let normalized = row.status;
+      if (admin && (!row.provider || row.provider === "wasender")) {
+        const status = await admin.getStatus(Number(row.provider_session_id));
+        normalized = String(status).toLowerCase();
+      } else {
+        const adapter = getProviderAdapter(row.provider || "wasender");
+        const ctx = await resolveSessionContext(row);
+        const statusRes = await adapter.getSessionStatus(ctx);
+        normalized = String(statusRes.status).toLowerCase();
+      }
+      await queryRun(dbClient, "UPDATE sessions SET status = ? WHERE id = ?", [normalized, localId]);
+      return { status: normalized };
+    } catch (err) {
+      request.log.warn(err);
+      return { status: row.status };
+    }
+  });
+
+  app.post<{ Params: { id: string } }>("/api/sessions/:id/restart", async (request, reply) => {
+    const localId = Number(request.params.id);
+    const row = (await queryGet(dbClient, "SELECT * FROM sessions WHERE id = ?", [localId])) as any;
+    if (!row) return reply.code(404).send({ error: "not found" });
+    try {
+      if (admin && (!row.provider || row.provider === "wasender")) {
+        await admin.restartSession(Number(row.provider_session_id));
+      } else {
+        const adapter = getProviderAdapter(row.provider || "wasender");
+        const ctx = await resolveSessionContext(row);
+        if (adapter.restart) await adapter.restart(ctx);
+        else if (adapter.restartSession) await adapter.restartSession(ctx);
+      }
+      return { ok: true };
+    } catch (err) {
+      request.log.error(err);
+      return reply.code(502).send({ error: "Restart failed" });
+    }
+  });
+
+  app.post<{ Params: { id: string } }>("/api/sessions/:id/disconnect", async (request, reply) => {
+    const localId = Number(request.params.id);
+    const row = (await queryGet(dbClient, "SELECT * FROM sessions WHERE id = ?", [localId])) as any;
+    if (!row) return reply.code(404).send({ error: "not found" });
+    try {
+      if (admin && (!row.provider || row.provider === "wasender")) {
+        await admin.disconnectSession(Number(row.provider_session_id));
+      } else {
+        const adapter = getProviderAdapter(row.provider || "wasender");
+        const ctx = await resolveSessionContext(row);
+        if (adapter.disconnect) await adapter.disconnect(ctx);
+        else if (adapter.disconnectSession) await adapter.disconnectSession(ctx);
+      }
+      await queryRun(dbClient, "UPDATE sessions SET status = 'disconnected' WHERE id = ?", [localId]);
+      return { ok: true };
+    } catch (err) {
+      request.log.error(err);
+      return reply.code(502).send({ error: "Disconnect failed" });
+    }
+  });
+
+  app.post<{ Params: { id: string }; Body: { webhookUrl?: string } }>(
+    "/api/sessions/:id/sync-webhook",
+    async (request, reply) => {
       const localId = Number(request.params.id);
-      const row = (await queryGet(dbClient, "SELECT id, provider_session_id FROM sessions WHERE id = ?", [
-        localId,
-      ])) as { id: number; provider_session_id: string } | undefined;
+      const row = (await queryGet(dbClient, "SELECT * FROM sessions WHERE id = ?", [localId])) as any;
       if (!row) return reply.code(404).send({ error: "not found" });
       try {
-        await admin.deleteSession(Number(row.provider_session_id));
+        const base = process.env.PUBLIC_BASE_URL || "https://wassflow.orizongroup.online";
+        const defaultUrl = (row.provider === "periskope")
+          ? `${base.replace(/\/$/, "")}/webhooks/periskope`
+          : `${base.replace(/\/$/, "")}/webhooks/wasender/${row.provider_session_id}`;
+        const targetUrl = request.body?.webhookUrl || defaultUrl;
+        if (admin && (!row.provider || row.provider === "wasender")) {
+          await admin.updateWebhook(Number(row.provider_session_id), targetUrl);
+        } else {
+          const adapter = getProviderAdapter(row.provider || "wasender");
+          const ctx = await resolveSessionContext(row);
+          await adapter.registerWebhook?.(ctx, targetUrl);
+        }
+        return { ok: true, webhookUrl: targetUrl };
       } catch (err) {
-        request.log.warn({ err }, "Wasender remote delete failed or session missing");
+        request.log.error(err);
+        return reply.code(502).send({ error: "Update webhook failed", details: err });
       }
-      await queryRun(dbClient, "DELETE FROM sessions WHERE id = ?", [localId]);
-      return { ok: true };
-    });
-  } else {
-    // Read-only session listing when no PAT is provided
-    app.get("/api/sessions", async () => {
-      return queryAll(
-        dbClient,
-        'SELECT id, name, provider_session_id AS "providerSessionId", status FROM sessions ORDER BY id',
-      );
-    });
-  }
+    },
+  );
+
+  app.post<{ Params: { id: string }; Body: { webhookUrl?: string } }>(
+    "/api/sessions/:id/register-webhook",
+    async (request, reply) => {
+      const localId = Number(request.params.id);
+      const row = (await queryGet(dbClient, "SELECT * FROM sessions WHERE id = ?", [localId])) as any;
+      if (!row) return reply.code(404).send({ error: "not found" });
+      try {
+        const base = process.env.PUBLIC_BASE_URL || "https://wassflow.orizongroup.online";
+        const defaultUrl = (row.provider === "periskope")
+          ? `${base.replace(/\/$/, "")}/webhooks/periskope`
+          : `${base.replace(/\/$/, "")}/webhooks/wasender/${row.provider_session_id}`;
+        const targetUrl = request.body?.webhookUrl || defaultUrl;
+        if (admin && (!row.provider || row.provider === "wasender")) {
+          await admin.updateWebhook(Number(row.provider_session_id), targetUrl);
+        } else {
+          const adapter = getProviderAdapter(row.provider || "wasender");
+          const ctx = await resolveSessionContext(row);
+          await adapter.registerWebhook?.(ctx, targetUrl);
+        }
+        return { ok: true, webhookUrl: targetUrl };
+      } catch (err) {
+        request.log.error(err);
+        return reply.code(502).send({ error: "Register webhook failed", details: err });
+      }
+    },
+  );
+
+  app.delete<{ Params: { id: string } }>("/api/sessions/:id", async (request, reply) => {
+    const localId = Number(request.params.id);
+    const row = (await queryGet(dbClient, "SELECT * FROM sessions WHERE id = ?", [localId])) as any;
+    if (!row) return reply.code(404).send({ error: "not found" });
+    try {
+      if (admin && (!row.provider || row.provider === "wasender")) {
+        await admin.deleteSession(Number(row.provider_session_id));
+      } else {
+        const adapter = getProviderAdapter(row.provider || "wasender");
+        const ctx = await resolveSessionContext(row);
+        await adapter.deleteSession?.(ctx);
+      }
+    } catch (err) {
+      request.log.warn({ err }, "Remote session delete failed or session missing");
+    }
+    await queryRun(dbClient, "DELETE FROM sessions WHERE id = ?", [localId]);
+    return { ok: true };
+  });
+
+  // Periskope Phone Discovery endpoint
+  app.get<{ Querystring: { apiKey?: string; sessionId?: string } }>(
+    "/api/providers/periskope/phones",
+    async (request, reply) => {
+      let apiKey = request.query.apiKey?.trim();
+      if (!apiKey && request.query.sessionId) {
+        const row = await queryGet(dbClient, "SELECT api_key_encrypted FROM sessions WHERE id = ?", [Number(request.query.sessionId)]) as any;
+        if (row?.api_key_encrypted) apiKey = decryptSecret(row.api_key_encrypted);
+      }
+      if (!apiKey) apiKey = process.env.PERISKOPE_API_KEY;
+      if (!apiKey) {
+        return reply.code(400).send({ error: "apiKey or sessionId with key is required" });
+      }
+
+      const adapter = getProviderAdapter("periskope") as any;
+      try {
+        const phones = await adapter.listConnectedPhones({ apiKey });
+        return { phones };
+      } catch (err) {
+        request.log.error(err);
+        return reply.code(502).send({ error: "Could not fetch connected phones from Periskope", details: String(err) });
+      }
+    },
+  );
 
   // ============================================================
   // CRM, Live Inbox & Funnel Management Endpoints

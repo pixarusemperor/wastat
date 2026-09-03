@@ -311,3 +311,30 @@ export const DEFAULT_FALLBACK_POLICY: FlowFallbackPolicy = {
   maxReprompts: 2,
 };
 
+// ============================================================
+// Multi-Provider WhatsApp Types (Wasender, Periskope)
+// ============================================================
+
+export type WhatsAppProviderType = "wasender" | "periskope" | (string & {});
+
+export interface SessionProviderConfig {
+  orgPhone?: string; // Required for Periskope (x-phone header, e.g. "919876543210")
+  baseUrl?: string; // Optional custom endpoint override
+  signingSecret?: string; // Webhook HMAC signing secret
+  [key: string]: unknown;
+}
+
+export interface SessionSummary {
+  id: number;
+  name: string;
+  providerSessionId: string;
+  provider: WhatsAppProviderType;
+  status: string;
+  isReady?: boolean;
+  apiKey?: string;
+  apiKeyMasked?: string;
+  hasApiKey?: boolean;
+  providerConfig?: SessionProviderConfig;
+  createdAt?: string;
+}
+

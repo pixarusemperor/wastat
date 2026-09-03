@@ -14,3 +14,4 @@ export * from "./stats.js";
 export * from "./types.js";
 export * from "./validation.js";
 export * from "./capabilities/registry.js";
+export * from "./phone.js";

@@ -249,4 +249,82 @@ describe("sessions via the DbClient seam (provider-aware port)", () => {
     expect(update).toBeDefined();
     expect(update!.params).toEqual(["connected", 1]);
   });
+
+  describe("Multi-Provider Periskope session lifecycle", () => {
+    it("creates a Periskope session with encrypted credentials and returns masked view", async () => {
+      const db = new Database(":memory:");
+      db.pragma("foreign_keys = ON");
+      db.exec(schema);
+      const app = await buildApp(db, {
+        clock: new FakeClock(),
+        sendMessage: async () => ({ providerMessageId: "p" }),
+      });
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/sessions",
+        payload: {
+          name: "Periskope Support Desk",
+          provider: "periskope",
+          phone: "+91 98765 43210",
+          apiKey: "prsk_live_secretkey1234567890",
+          webhookSecret: "whsec_supersecret9876",
+          providerConfig: { orgPhone: "+919876543210" },
+        },
+      });
+
+      expect(res.statusCode).toBe(201);
+      const body = res.json();
+      expect(body.name).toBe("Periskope Support Desk");
+      expect(body.provider).toBe("periskope");
+      expect(body.providerSessionId).toBe("919876543210");
+      expect(body.hasApiKey).toBe(true);
+      // Key must be masked
+      expect(body.apiKeyMasked).toMatch(/^prsk_••••.*7890$/);
+      expect(body.webhookSecretMasked).toMatch(/^whsec_••••.*9876$/);
+      expect(body.webhookUrl).toContain("/webhooks/periskope");
+
+      // Verify row in database is encrypted
+      const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(body.id) as any;
+      expect(row.api_key_encrypted).toBeInstanceOf(Buffer);
+      // Plaintext string must NOT appear in raw database bytes
+      expect(row.api_key_encrypted.toString("utf8")).not.toBe("prsk_live_secretkey1234567890");
+
+      // PATCH session updates credentials
+      const patchRes = await app.inject({
+        method: "PATCH",
+        url: `/api/sessions/${body.id}`,
+        payload: {
+          name: "Periskope Renamed",
+          apiKey: "prsk_live_newkey9999",
+        },
+      });
+      expect(patchRes.statusCode).toBe(200);
+      expect(patchRes.json().name).toBe("Periskope Renamed");
+      expect(patchRes.json().apiKeyMasked).toMatch(/^prsk_••••.*9999$/);
+    });
+
+    it("rejects Periskope session without a valid phone number", async () => {
+      const db = new Database(":memory:");
+      db.pragma("foreign_keys = ON");
+      db.exec(schema);
+      const app = await buildApp(db, {
+        clock: new FakeClock(),
+        sendMessage: async () => ({ providerMessageId: "p" }),
+      });
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/sessions",
+        payload: {
+          name: "Invalid Periskope",
+          provider: "periskope",
+          phone: "invalid-phone",
+        },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toContain("valid phone number");
+    });
+  });
 });
+

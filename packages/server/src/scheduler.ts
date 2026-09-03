@@ -67,6 +67,7 @@ export interface EnqueueInput {
   executionId: number;
   nodeKey?: string;
   payload?: unknown;
+  priority?: number; // 1: direct customer chats (preemptive), 2: bulk broadcasts
   runAt?: Date;
 }
 
@@ -106,7 +107,7 @@ export function createScheduler(
     SELECT j.*, we.session_id
     FROM jobs j JOIN workflow_executions we ON we.id = j.execution_id
     WHERE j.status = 'pending' AND j.run_at <= ?
-    ORDER BY j.run_at
+    ORDER BY j.priority ASC, j.run_at ASC
     LIMIT 50
   `;
 
@@ -135,8 +136,9 @@ export function createScheduler(
           [job.execution_id, jsonToDb(dbClient, { job_id: job.id, error: String(err), class: cls })],
         );
       } else {
-        // retryable and unknown both retry — unknown capped by MAX_ATTEMPTS
-        const backoff = BASE_BACKOFF_MS * 2 ** (attempts - 1); // 30s, 60s
+        // Retryable: 429 rate limits retry faster with jittered backoff (2s, 4s); network/5xx use 30s base backoff
+        const isRateLimit = (err as { status?: number })?.status === 429;
+        const backoff = isRateLimit ? 2_000 * attempts : BASE_BACKOFF_MS * 2 ** (attempts - 1);
         await queryRun(dbClient, "UPDATE jobs SET run_at = ?, last_error = ? WHERE id = ?", [
           iso(clock.now() + backoff),
           String(err),
@@ -175,12 +177,13 @@ export function createScheduler(
   async function enqueue(input: EnqueueInput): Promise<number> {
     const info = await queryRun(
       dbClient,
-      "INSERT INTO jobs (type, execution_id, node_key, payload, run_at) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO jobs (type, execution_id, node_key, payload, priority, run_at) VALUES (?, ?, ?, ?, ?, ?)",
       [
         input.type,
         input.executionId,
         input.nodeKey ?? null,
         jsonToDb(dbClient, input.payload ?? {}),
+        input.priority ?? 1,
         iso(input.runAt?.getTime() ?? clock.now()),
       ],
     );

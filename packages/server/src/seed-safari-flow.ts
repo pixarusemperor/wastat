@@ -18,17 +18,17 @@ export async function runSafariDemo() {
 
   // 1. Ensure Sessions: Safari & Patrick
   db.prepare(`
-    INSERT INTO sessions (name, provider_session_id, status)
-    VALUES ('Safari (Host)', 'session_safari_host', 'connected')
-    ON CONFLICT(provider_session_id) DO UPDATE SET status = 'connected', name = 'Safari (Host)'
+    INSERT INTO sessions (name, provider, provider_session_id, status)
+    VALUES ('Safari (Host)', 'wasender', 'session_safari_host', 'connected')
+    ON CONFLICT(provider, provider_session_id) DO UPDATE SET status = 'connected', name = 'Safari (Host)'
   `).run();
 
   const safariSession = db.prepare("SELECT id FROM sessions WHERE provider_session_id = 'session_safari_host'").get() as { id: number };
 
   db.prepare(`
-    INSERT INTO sessions (name, provider_session_id, status)
-    VALUES ('Patrick (Lead)', 'session_patrick_lead', 'connected')
-    ON CONFLICT(provider_session_id) DO UPDATE SET status = 'connected', name = 'Patrick (Lead)'
+    INSERT INTO sessions (name, provider, provider_session_id, status)
+    VALUES ('Patrick (Lead)', 'wasender', 'session_patrick_lead', 'connected')
+    ON CONFLICT(provider, provider_session_id) DO UPDATE SET status = 'connected', name = 'Patrick (Lead)'
   `).run();
 
   // 2. Ensure Contact: Patrick

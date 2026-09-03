@@ -18,6 +18,10 @@ import {
 } from "./db/client.js";
 import { realClock, type Clock } from "./scheduler.js";
 import { makeWasenderAdmin, upsertSession } from "./wasender-admin.js";
+import fastifyRawBody from "fastify-raw-body";
+import { getProviderAdapter, hasProviderAdapter, type WhatsAppProviderType } from "./providers/index.js";
+import { decryptSecret } from "./crypto.js";
+import { normalizePhoneNumber } from "@wastat/shared";
 
 export interface AppDeps {
   clock?: Clock;
@@ -27,7 +31,7 @@ export interface AppDeps {
     kind: "text" | "media";
     text?: string;
     mediaId?: number;
-  }) => Promise<{ providerMessageId: string }>;
+  }) => Promise<{ providerMessageId: string; queueId?: string }>;
   markMessageAsRead?: (input: {
     sessionId: number;
     toPhone: string;
@@ -72,6 +76,13 @@ export async function buildApp(db: DbClient | BetterSqlite3.Database, deps: AppD
   });
 
   await app.register(cors, { origin: true });
+  await app.register(fastifyRawBody, {
+    field: "rawBody",
+    global: false,
+    encoding: "utf8",
+    runFirst: true,
+  });
+
   registerApiRoutes(app, dbClient, { wasenderPat: deps.wasenderPat, fetchImpl: deps.fetchImpl, engine });
   await registerMediaRoutes(app, dbClient, deps.storage);
 
@@ -94,10 +105,6 @@ export async function buildApp(db: DbClient | BetterSqlite3.Database, deps: AppD
     });
   }
 
-  const getSession = async (providerSessionId: string) =>
-    queryGet(dbClient, "SELECT id, webhook_secret FROM sessions WHERE provider_session_id = ?", [
-      providerSessionId,
-    ]);
   const upsertContact = async (phone: string, name: string | null) =>
     execRun(
       dbClient,
@@ -107,118 +114,169 @@ export async function buildApp(db: DbClient | BetterSqlite3.Database, deps: AppD
     );
   const getContact = async (phone: string) =>
     queryGet(dbClient, "SELECT id FROM contacts WHERE phone = ?", [phone]);
-  const insertMessage = async (sessionId: number, contactId: number, text: string, providerMessageId: string, ts: string) =>
-    queryRun(
-      dbClient,
-      `INSERT INTO messages (session_id, contact_id, direction, message_type, text, provider_message_id, timestamp)
-    VALUES (?, ?, 'in', 'text', ?, ?, ?)`,
-      [sessionId, contactId, text, providerMessageId, ts],
-    );
 
-  interface WasenderWebhook {
-    event: string;
-    timestamp: number;
-    data?: {
-      messages?: {
-        key?: {
-          id?: string;
-          remoteJid?: string;
-          fromMe?: boolean;
-          cleanedSenderPn?: string;
-          cleanedParticipantPn?: string;
-        };
-        messageBody?: string;
-        pushName?: string;
-      };
-      pushName?: string;
-    };
-  }
+  const handleWebhook = async (
+    provider: string,
+    providerSessionId: string | undefined,
+    request: any,
+    reply: any,
+  ) => {
+    const providerType = (provider || "wasender") as WhatsAppProviderType;
+    if (!hasProviderAdapter(providerType)) {
+      return reply.code(404).send({ error: `Unsupported provider: ${provider}` });
+    }
 
-  app.post<{ Params: { providerSessionId: string } }>(
-    "/webhooks/wasender/:providerSessionId",
-    async (request, reply) => {
-      const session = (await getSession(request.params.providerSessionId)) as
-        | { id: number; webhook_secret: string | null }
-        | undefined;
-      const signature = request.headers["x-webhook-signature"];
-      if (session?.webhook_secret && signature && signature !== session.webhook_secret) {
-        return reply.code(401).send({ error: "Invalid signature" });
+    const adapter = getProviderAdapter(providerType);
+    const rawBody = request.rawBody || (typeof request.body === "string" ? request.body : JSON.stringify(request.body || {}));
+    const parsedEvent = adapter.parseWebhook(request.body, request.headers);
+    if (!parsedEvent) {
+      return reply.code(200).send({ ignored: "unparseable" });
+    }
+
+    // Resolve session
+    let session: any = null;
+    if (providerSessionId) {
+      session = await queryGet(
+        dbClient,
+        "SELECT id, provider, provider_session_id, webhook_secret, api_key_encrypted, provider_config FROM sessions WHERE provider = ? AND provider_session_id = ?",
+        [providerType, providerSessionId],
+      );
+      if (!session && providerType === "wasender") {
+        // Fallback for legacy Wasender sessions
+        session = await queryGet(
+          dbClient,
+          "SELECT id, provider, provider_session_id, webhook_secret, api_key_encrypted, provider_config FROM sessions WHERE provider_session_id = ?",
+          [providerSessionId],
+        );
       }
-      if (!session) {
-        return reply.code(404).send({ error: "Session not found" });
+    } else if (parsedEvent.sessionLookup?.orgPhone) {
+      const cleanOrgPhone = normalizePhoneNumber(parsedEvent.sessionLookup.orgPhone);
+      session = await queryGet(
+        dbClient,
+        `SELECT id, provider, provider_session_id, webhook_secret, api_key_encrypted, provider_config
+         FROM sessions
+         WHERE provider = ? AND (provider_session_id = ? OR ${dbClient.sql ? "provider_config::text" : "provider_config"} LIKE ?)`,
+        [providerType, cleanOrgPhone, `%${cleanOrgPhone}%`],
+      );
+    } else if (parsedEvent.sessionLookup?.providerSessionId) {
+      session = await queryGet(
+        dbClient,
+        "SELECT id, provider, provider_session_id, webhook_secret, api_key_encrypted, provider_config FROM sessions WHERE provider = ? AND provider_session_id = ?",
+        [providerType, parsedEvent.sessionLookup.providerSessionId],
+      );
+    }
+
+    if (!session) {
+      return reply.code(404).send({ error: "Session not found" });
+    }
+
+    // Verify webhook signature
+    const secret = session.webhook_secret ? decryptSecret(session.webhook_secret) : undefined;
+    const isValid = adapter.verifyWebhookSignature(rawBody, request.headers, secret);
+    if (!isValid) {
+      return reply.code(401).send({ error: "Invalid signature" });
+    }
+
+    // Freshness check: reject webhooks with > 5 min clock drift to prevent replay attacks
+    if (parsedEvent.eventTimestamp) {
+      const tsMs = new Date(parsedEvent.eventTimestamp).getTime();
+      if (!isNaN(tsMs)) {
+        const drift = Math.abs(Date.now() - tsMs);
+        if (drift > 300_000) {
+          return reply.code(400).send({ error: "Webhook timestamp expired or clock drift exceeded" });
+        }
       }
+    }
 
-      const body = request.body as Record<string, any>;
-      const eventName = body.event || "";
+    // Webhook Idempotency Ledger: reject duplicate event occurrences
+    let eventKey: string | undefined;
+    if (parsedEvent.eventType === "message.created" && parsedEvent.message?.id) {
+      eventKey = `msg:${parsedEvent.message.id}`;
+    } else if (parsedEvent.eventType === "message.ack" && parsedEvent.ack?.messageId) {
+      eventKey = `ack:${parsedEvent.ack.messageId}:${parsedEvent.ack.status}`;
+    } else if (parsedEvent.eventType === "reaction.created" && parsedEvent.reaction?.messageId) {
+      eventKey = `react:${parsedEvent.reaction.messageId}:${parsedEvent.reaction.emoji ?? parsedEvent.reaction.reactionText}`;
+    }
 
-      // 1. Session Status Updates
-      if (eventName === "session.status" || eventName === "connection.update") {
-        const newStatus = body.data?.status || body.data?.state || "unknown";
-        await queryRun(dbClient, "UPDATE sessions SET status = ? WHERE id = ?", [newStatus, session.id]);
-        return { ok: true, handled: "session.status", status: newStatus };
+    if (eventKey) {
+      try {
+        await execRun(dbClient, "INSERT INTO webhook_idempotency (provider, event_id) VALUES (?, ?)", [
+          providerType,
+          eventKey,
+        ]);
+      } catch {
+        return reply.code(200).send({ ok: true, duplicate: true });
       }
+    }
 
-      // 2. Message Status Updates (Delivered, Read / Blue Ticks)
-      if (eventName === "messages.update" || eventName === "message_ack" || eventName === "message.update") {
-        const updates = Array.isArray(body.data) ? body.data : [body.data || {}];
-        for (const item of updates) {
-          const msgId = item.key?.id || item.id;
-          const statusRaw = item.update?.status || item.status;
-          let statusStr: string | null = null;
-          if (statusRaw === 3 || statusRaw === "delivered") statusStr = "delivered";
-          else if (statusRaw === 4 || statusRaw === "read") statusStr = "read";
-          else if (statusRaw === 2 || statusRaw === "sent") statusStr = "sent";
+    // 1. Session Status Updates
+    if (parsedEvent.eventType === "status.updated") {
+      const newStatus = (parsedEvent.rawPayload as any)?.status || (parsedEvent.rawPayload as any)?.data?.status || "unknown";
+      await queryRun(dbClient, "UPDATE sessions SET status = ? WHERE id = ?", [newStatus, session.id]);
+      return { ok: true, handled: "session.status", status: newStatus };
+    }
 
-          if (msgId && statusStr) {
-            await queryRun(dbClient, "UPDATE messages SET status = ? WHERE provider_message_id = ?", [
-              statusStr,
-              msgId,
-            ]);
+    // 2. Message Delivery Status / ACKs (Monotonic update)
+    if (parsedEvent.eventType === "message.ack" && parsedEvent.ack) {
+      const { messageId, status, queueId } = parsedEvent.ack;
+      if (messageId || queueId) {
+        const rankMap: Record<string, number> = { failed: -1, received: 0, queued: 1, sent: 2, delivered: 3, read: 4 };
+        const currentMsg = (await queryGet(
+          dbClient,
+          "SELECT id, status FROM messages WHERE provider_message_id = ? OR (queue_id IS NOT NULL AND queue_id = ?)",
+          [messageId, queueId || messageId],
+        )) as { id: number; status: string } | undefined;
+
+        if (currentMsg) {
+          const currentRank = rankMap[currentMsg.status] ?? 0;
+          const newRank = rankMap[status] ?? 0;
+          if (newRank > currentRank || status === "failed") {
+            await queryRun(dbClient, "UPDATE messages SET status = ? WHERE id = ?", [status, currentMsg.id]);
             await execRun(
               dbClient,
               `INSERT INTO events (event_type, session_id, message_id, data)
-              SELECT 'message.status_updated', ?, id, ? FROM messages WHERE provider_message_id = ?`,
-              [session.id, jsonToDb(dbClient, { status: statusStr }), msgId],
+               VALUES ('message.status_updated', ?, ?, ?)`,
+              [session.id, currentMsg.id, jsonToDb(dbClient, { status, messageId, queueId })],
             );
           }
         }
-        return { ok: true, handled: "messages.update" };
       }
+      return { ok: true, handled: "message.ack" };
+    }
 
-      // 3. Inbound Messages
-      const isMessageEvent =
-        eventName === "messages.received" ||
-        eventName === "messages-group.received" ||
-        eventName === "messages.upsert" ||
-        eventName === "message.received";
+    // 3. Message Created
+    if (parsedEvent.eventType === "message.created" && parsedEvent.message) {
+      const msg = parsedEvent.message;
+      const phone = (msg.fromMe && !msg.isGroup && msg.chatId)
+        ? msg.chatId.replace(/@(c|g)\.us$/, "").replace(/@s\.whatsapp\.net$/, "").replace(/\D/g, "")
+        : msg.senderPhone;
+      const pushName = msg.pushName || null;
 
-      if (!isMessageEvent) return { ignored: eventName };
-
-      const key = body.data?.messages?.key || body.data?.key;
-      if (!key?.id || !key.remoteJid) return { ignored: "malformed" };
-
-      // Determine sender phone safely (preventing @lid corruption)
-      const isGroup = Boolean(key.remoteJid.endsWith("@g.us") || eventName === "messages-group.received");
-      const phone =
-        key.cleanedSenderPn ||
-        key.cleanedParticipantPn ||
-        (!isGroup && key.remoteJid.includes("@") ? key.remoteJid.split("@")[0] : key.remoteJid);
-      const pushName = body.data?.messages?.pushName || body.data?.pushName || null;
-
-      // Handle Human Takeover: If fromMe is true, only activate takeover if message was NOT sent by WaStat bot
-      if (key.fromMe) {
+      // Handle Human Takeover / Bot Echo Check
+      if (msg.fromMe) {
         await upsertContact(phone, pushName);
         const contact = (await getContact(phone)) as { id: number } | undefined;
 
-        // Dedup / Echo check: If this provider_message_id is already in messages or events, it is our own automated dispatch!
-        const isBotEcho = key.id
+        // Dedup / Echo check against both provider_message_id and queue_id
+        const isBotEcho = (msg.id || msg.queueId)
           ? Boolean(
-              (await queryGet(dbClient, "SELECT id FROM messages WHERE provider_message_id = ?", [key.id])) ||
+              (await queryGet(
+                dbClient,
+                "SELECT id FROM messages WHERE provider_message_id = ? OR (queue_id IS NOT NULL AND queue_id = ?)",
+                [msg.id, msg.queueId || msg.id],
+              )) ||
               (await queryGet(
                 dbClient,
                 `SELECT id FROM events WHERE event_type IN ('api.outbound_dispatch', 'api.outbound_response', 'message.sent') AND ${dbClient.sql ? "data::text" : "data"} LIKE ?`,
-                [`%${key.id}%`],
-              ))
+                [`%${msg.id}%`],
+              )) ||
+              (msg.queueId
+                ? await queryGet(
+                    dbClient,
+                    `SELECT id FROM events WHERE event_type IN ('api.outbound_dispatch', 'api.outbound_response', 'message.sent') AND ${dbClient.sql ? "data::text" : "data"} LIKE ?`,
+                    [`%${msg.queueId}%`],
+                  )
+                : false),
             )
           : false;
 
@@ -226,61 +284,84 @@ export async function buildApp(db: DbClient | BetterSqlite3.Database, deps: AppD
           return { ignored: "fromMe_bot_echo" };
         }
 
+        // Genuine manual intervention by human operator
         if (contact) {
           const pausedUntil = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
           await queryRun(
             dbClient,
             `UPDATE contacts
-            SET bot_status = 'paused_human',
-                bot_paused_until = ?
-            WHERE id = ?`,
+             SET bot_status = 'paused_human',
+                 bot_paused_until = ?
+             WHERE id = ?`,
             [pausedUntil, contact.id],
           );
 
           await queryRun(
             dbClient,
             `INSERT INTO events (event_type, session_id, contact_id, data)
-            VALUES ('human_takeover.activated', ?, ?, ?)`,
-            [session.id, contact.id, jsonToDb(dbClient, { paused_until: pausedUntil, provider_message_id: key.id })],
+             VALUES ('human_takeover.activated', ?, ?, ?)`,
+            [session.id, contact.id, jsonToDb(dbClient, { paused_until: pausedUntil, provider_message_id: msg.id })],
           );
         }
         return { ignored: "fromMe_takeover_activated" };
       }
 
-      // PRD §52: duplicate deliveries are dropped here — the UNIQUE constraint
-      // on provider_message_id is the dedup key.
-      const m = Array.isArray(body.data?.messages) ? body.data?.messages[0] : (body.data?.messages || body.data?.message || body.data);
-      const messageBody =
-        m?.messageBody ??
-        m?.conversation ??
-        m?.extendedTextMessage?.text ??
-        m?.imageMessage?.caption ??
-        m?.videoMessage?.caption ??
-        m?.documentMessage?.caption ??
-        m?.buttonsResponseMessage?.selectedDisplayText ??
-        m?.listResponseMessage?.title ??
-        body.data?.messageBody ??
-        body.data?.text ??
-        body.data?.body ??
-        null;
+      // Customer Inbound Message
+      await upsertContact(phone, pushName);
+      const contact = (await getContact(phone)) as { id: number };
 
-      const ts = body.timestamp ? new Date(body.timestamp * 1000).toISOString() : new Date().toISOString();
-
+      let insertedId: number | undefined;
       try {
-        await upsertContact(phone, pushName);
-        const contact = (await getContact(phone)) as { id: number };
-        await insertMessage(session.id, contact.id, messageBody, key.id, ts);
+        const res = await queryRun(
+          dbClient,
+          `INSERT INTO messages (session_id, contact_id, direction, message_type, text, provider_message_id, queue_id, timestamp)
+           VALUES (?, ?, 'in', 'text', ?, ?, ?, ?)`,
+          [session.id, contact.id, msg.body, msg.id, msg.queueId ?? null, msg.timestamp],
+        );
+        insertedId = res.lastInsertRowid;
       } catch {
         return { duplicate: true };
       }
 
-      const msg = (await queryGet(dbClient, "SELECT id, contact_id FROM messages WHERE provider_message_id = ?", [
-        key.id,
-      ])) as { id: number; contact_id: number };
-      await engine.attributeReply(msg.id); // PRD §32 — even when nothing matches
-      const executionId = await engine.handleIncomingMessage(session.id, msg.contact_id, msg.id, isGroup);
-      return { ok: true, executionId };
-    },
+      const insertedMsg = (await queryGet(
+        dbClient,
+        "SELECT id, contact_id FROM messages WHERE id = ? OR provider_message_id = ?",
+        [insertedId || 0, msg.id],
+      )) as { id: number; contact_id: number };
+
+      if (insertedMsg) {
+        await engine.attributeReply(insertedMsg.id);
+        const executionId = await engine.handleIncomingMessage(session.id, insertedMsg.contact_id, insertedMsg.id, msg.isGroup);
+        return { ok: true, executionId };
+      }
+
+      return { ok: true };
+    }
+
+    return { ok: true, ignored: parsedEvent.eventType };
+  };
+
+  const webhookOpts = { config: { rawBody: true } };
+
+  // 1. Legacy Wasender Route
+  app.post<{ Params: { providerSessionId: string } }>(
+    "/webhooks/wasender/:providerSessionId",
+    webhookOpts,
+    async (request, reply) => handleWebhook("wasender", request.params.providerSessionId, request, reply),
+  );
+
+  // 2. Multi-Provider Parameterized Session Route (/webhooks/:provider/:providerSessionId)
+  app.post<{ Params: { provider: string; providerSessionId: string } }>(
+    "/webhooks/:provider/:providerSessionId",
+    webhookOpts,
+    async (request, reply) => handleWebhook(request.params.provider, request.params.providerSessionId, request, reply),
+  );
+
+  // 3. Multi-Provider Multiplexed Org Route (/webhooks/:provider)
+  app.post<{ Params: { provider: string } }>(
+    "/webhooks/:provider",
+    webhookOpts,
+    async (request, reply) => handleWebhook(request.params.provider, undefined, request, reply),
   );
 
   return app;

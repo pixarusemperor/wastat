@@ -18,6 +18,7 @@
     "@wastat/shared": "*",
     "better-sqlite3": "^11.0.0",
     "fastify": "^5.0.0",
+    "fastify-raw-body": "^6.0.1",
     "postgres": "^3.4.9",
     "tsx": "^4.0.0"
   },

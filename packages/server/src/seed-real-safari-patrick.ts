@@ -14,9 +14,9 @@ export async function setupRealSafariAndPatrick() {
 
   // 1. Ensure Real Wasender Sessions: Safari (105947) & Patrick Simo (112691)
   db.prepare(`
-    INSERT INTO sessions (name, provider_session_id, status)
-    VALUES ('Safari', '105947', 'connected')
-    ON CONFLICT(provider_session_id) DO UPDATE SET name = 'Safari', status = 'connected'
+    INSERT INTO sessions (name, provider, provider_session_id, status)
+    VALUES ('Safari', 'wasender', '105947', 'connected')
+    ON CONFLICT(provider, provider_session_id) DO UPDATE SET name = 'Safari', status = 'connected'
   `).run();
 
   const safariSession = db.prepare("SELECT id, name, provider_session_id FROM sessions WHERE provider_session_id = '105947'").get() as {
@@ -26,9 +26,9 @@ export async function setupRealSafariAndPatrick() {
   };
 
   db.prepare(`
-    INSERT INTO sessions (name, provider_session_id, status)
-    VALUES ('Patrick Simo', '112691', 'connected')
-    ON CONFLICT(provider_session_id) DO UPDATE SET name = 'Patrick Simo', status = 'connected'
+    INSERT INTO sessions (name, provider, provider_session_id, status)
+    VALUES ('Patrick Simo', 'wasender', '112691', 'connected')
+    ON CONFLICT(provider, provider_session_id) DO UPDATE SET name = 'Patrick Simo', status = 'connected'
   `).run();
 
   const patrickSession = db.prepare("SELECT id, name, provider_session_id FROM sessions WHERE provider_session_id = '112691'").get() as {

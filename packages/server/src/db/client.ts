@@ -27,6 +27,32 @@ export function applySqliteSchema(db: BetterSqlite3.Database): void {
   } catch (err) {
     console.warn("[DB] SQLite schema notice:", (err as Error)?.message || err);
   }
+
+  // Idempotent column upgrades for existing database files
+  try {
+    db.exec("ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT 'wasender'");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE sessions ADD COLUMN provider_config TEXT DEFAULT '{}'");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE messages ADD COLUMN queue_id TEXT");
+  } catch {}
+  try {
+    db.exec("CREATE INDEX IF NOT EXISTS idx_messages_queue_id ON messages (queue_id)");
+  } catch {}
+  try {
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_provider_scoping ON sessions(provider, provider_session_id)");
+  } catch {}
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS webhook_idempotency (
+      id         INTEGER PRIMARY KEY,
+      provider   TEXT NOT NULL,
+      event_id   TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      UNIQUE(provider, event_id)
+    )`);
+  } catch {}
 }
 
 // ---------------------------------------------------------------------------

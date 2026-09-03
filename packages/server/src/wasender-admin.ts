@@ -62,9 +62,9 @@ export async function upsertSession(db: DbClient, s: WasenderSession): Promise<v
   await queryRun(
     db,
     `
-    INSERT INTO sessions (name, provider_session_id, status, api_key_encrypted, webhook_secret)
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(provider_session_id) DO UPDATE SET
+    INSERT INTO sessions (name, provider, provider_session_id, status, api_key_encrypted, webhook_secret)
+    VALUES (?, 'wasender', ?, ?, ?, ?)
+    ON CONFLICT(provider, provider_session_id) DO UPDATE SET
       name = excluded.name, status = excluded.status,
       api_key_encrypted = excluded.api_key_encrypted, webhook_secret = excluded.webhook_secret
   `,

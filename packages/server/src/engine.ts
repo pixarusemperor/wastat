@@ -43,7 +43,8 @@ export interface EngineDeps {
   rng?: () => number;
   sendMessage: (input: SendMessageInput) => Promise<{
     providerMessageId: string;
-    status?: number;
+    queueId?: string;
+    status?: number | string;
     rawPayload?: unknown;
     rawResponse?: unknown;
   }>;
@@ -1288,16 +1289,18 @@ export function createEngine(db: DbClient | BetterSqlite3.Database, deps: Engine
 
       await queryRun(
         dbClient,
-        `INSERT INTO messages (session_id, contact_id, direction, message_type, text, provider_message_id, workflow_execution_id, node_key, status, timestamp)
-        VALUES (?, ?, 'out', ?, ?, ?, ?, ?, 'sent', ?)`,
+        `INSERT INTO messages (session_id, contact_id, direction, message_type, text, provider_message_id, queue_id, workflow_execution_id, node_key, status, timestamp)
+        VALUES (?, ?, 'out', ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           exec.session_id,
           exec.contact_id,
           payload.kind === "media" ? "media" : "text",
           payload.text ?? null,
           result.providerMessageId,
+          result.queueId ?? null,
           job.execution_id,
           job.node_key,
+          typeof result.status === "string" ? result.status : "sent",
           iso(clock.now()),
         ],
       );

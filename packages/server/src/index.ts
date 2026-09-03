@@ -23,31 +23,96 @@ process.env.STATIC_DIR ||= "/app/public";
 
 import { makeWasenderAdmin, upsertSession } from "./wasender-admin.js";
 
+import { getProviderAdapter, type WhatsAppProviderType } from "./providers/index.js";
+import { decryptSecret } from "./crypto.js";
+import { jsonFromDb } from "./db/client.js";
+
 const app = await buildApp(dbClient, {
   wasenderPat: process.env.WASENDER_PAT,
   sendMessage: process.env.MOCK_SEND
-    ? async () => ({ providerMessageId: `mock-${Date.now()}` })
+    ? async () => ({ providerMessageId: `mock-${Date.now()}`, status: "sent" })
     : async (input) => {
-        const row = (await getApiKey(input.sessionId)) as { api_key_encrypted: Buffer | string | null } | undefined;
-        const apiKey = row?.api_key_encrypted?.toString("utf8") || process.env.WASENDER_PAT;
+        const session = (await queryGet(
+          dbClient,
+          "SELECT id, provider, provider_session_id, api_key_encrypted, provider_config FROM sessions WHERE id = ?",
+          [input.sessionId],
+        )) as {
+          id: number;
+          provider: string;
+          provider_session_id: string;
+          api_key_encrypted: Buffer | string | null;
+          provider_config: unknown;
+        } | undefined;
+
+        const provider = (session?.provider || "wasender") as WhatsAppProviderType;
+        const adapter = getProviderAdapter(provider);
+        const decryptedKey = session?.api_key_encrypted ? decryptSecret(session.api_key_encrypted) : undefined;
+        const apiKey = decryptedKey || (provider === "wasender" ? process.env.WASENDER_PAT : process.env.PERISKOPE_API_KEY);
         if (!apiKey) throw { status: 500, code: "NO_SESSION_KEY" };
-        return makeWasenderTransport(dbClient)({ ...input, apiKey });
+
+        const sessionContext = {
+          id: input.sessionId,
+          sessionId: input.sessionId,
+          provider,
+          providerSessionId: session?.provider_session_id || "",
+          apiKey,
+          providerConfig: jsonFromDb(session?.provider_config),
+        };
+
+        const inputAny = input as any;
+        return adapter.sendMessage(sessionContext, {
+          to: input.toPhone,
+          text: input.text,
+          mediaUrl: inputAny.mediaUrl,
+          fileName: inputAny.filename,
+          mimetype: inputAny.mimeType,
+        });
       },
   markMessageAsRead: process.env.MOCK_SEND
     ? async () => {}
     : async (input) => {
-        const row = (await getApiKey(input.sessionId)) as { api_key_encrypted: Buffer | string | null } | undefined;
-        const apiKey = row?.api_key_encrypted?.toString("utf8") || process.env.WASENDER_PAT;
+        const session = (await queryGet(
+          dbClient,
+          "SELECT id, provider, provider_session_id, api_key_encrypted, provider_config FROM sessions WHERE id = ?",
+          [input.sessionId],
+        )) as any;
+        if (!session) return;
+        const provider = (session.provider || "wasender") as WhatsAppProviderType;
+        const adapter = getProviderAdapter(provider);
+        const apiKey = (session.api_key_encrypted ? decryptSecret(session.api_key_encrypted) : undefined) ||
+          (provider === "wasender" ? process.env.WASENDER_PAT : process.env.PERISKOPE_API_KEY);
         if (!apiKey) return;
-        await markMessageAsRead(apiKey, input.key);
+        await adapter.markAsRead({
+          id: input.sessionId,
+          sessionId: input.sessionId,
+          provider,
+          providerSessionId: session.provider_session_id,
+          apiKey,
+          providerConfig: jsonFromDb(session.provider_config),
+        }, input.key.id, input.toPhone);
       },
   sendPresenceUpdate: process.env.MOCK_SEND
     ? async () => {}
     : async (input) => {
-        const row = (await getApiKey(input.sessionId)) as { api_key_encrypted: Buffer | string | null } | undefined;
-        const apiKey = row?.api_key_encrypted?.toString("utf8") || process.env.WASENDER_PAT;
+        const session = (await queryGet(
+          dbClient,
+          "SELECT id, provider, provider_session_id, api_key_encrypted, provider_config FROM sessions WHERE id = ?",
+          [input.sessionId],
+        )) as any;
+        if (!session) return;
+        const provider = (session.provider || "wasender") as WhatsAppProviderType;
+        const adapter = getProviderAdapter(provider);
+        const apiKey = (session.api_key_encrypted ? decryptSecret(session.api_key_encrypted) : undefined) ||
+          (provider === "wasender" ? process.env.WASENDER_PAT : process.env.PERISKOPE_API_KEY);
         if (!apiKey) return;
-        await sendPresenceUpdate(apiKey, input.toPhone, input.type);
+        await adapter.sendPresenceUpdate({
+          id: input.sessionId,
+          sessionId: input.sessionId,
+          provider,
+          providerSessionId: session.provider_session_id,
+          apiKey,
+          providerConfig: jsonFromDb(session.provider_config),
+        }, input.toPhone, input.type);
       },
 });
 
