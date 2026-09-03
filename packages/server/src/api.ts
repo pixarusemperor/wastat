@@ -1083,57 +1083,68 @@ export function registerApiRoutes(
       const apiKeyEncrypted = request.body.apiKey ? encryptSecret(request.body.apiKey.trim()) : null;
       const webhookSecretEncrypted = request.body.webhookSecret ? encryptSecret(request.body.webhookSecret.trim()) : null;
       const config = request.body.providerConfig || {};
+      const status = (request.body as any).status || "connected";
 
       try {
         const info = await queryRun(
           dbClient,
           `INSERT INTO sessions (name, provider, provider_session_id, status, api_key_encrypted, webhook_secret, provider_config)
-           VALUES (?, 'periskope', ?, 'connected', ?, ?, ?)`,
-          [name, cleanPhone, apiKeyEncrypted, webhookSecretEncrypted, jsonToDb(dbClient, config)],
+           VALUES (?, 'periskope', ?, ?, ?, ?, ?)
+           ON CONFLICT(provider, provider_session_id) DO UPDATE SET
+             name = excluded.name, status = excluded.status,
+             api_key_encrypted = excluded.api_key_encrypted, webhook_secret = excluded.webhook_secret,
+             provider_config = excluded.provider_config`,
+          [name, cleanPhone, status, apiKeyEncrypted, webhookSecretEncrypted, jsonToDb(dbClient, config)],
         );
         const createdId = info.lastInsertRowid ?? 0;
         const row = await queryGet(
           dbClient,
-          "SELECT id, name, provider, provider_session_id, status, api_key_encrypted, webhook_secret, provider_config, created_at FROM sessions WHERE id = ?",
-          [createdId],
+          "SELECT id, name, provider, provider_session_id, status, api_key_encrypted, webhook_secret, provider_config, created_at FROM sessions WHERE (id = ? OR (provider = 'periskope' AND provider_session_id = ?)) ORDER BY id DESC LIMIT 1",
+          [createdId, cleanPhone],
         );
         return reply.code(201).send(formatSession(row));
       } catch (err) {
         request.log.error(err);
-        return reply.code(409).send({ error: "Session with this phone already exists for Periskope" });
+        return reply.code(500).send({ error: "Failed to create or update Periskope session", details: String(err) });
       }
     }
 
     // 2. Wasender Session Creation
-    if (request.body.providerSessionId || !admin) {
-      // Manual Wasender session entry
-      const provSessionId = String(request.body.providerSessionId || Date.now());
+    if (request.body.phone || request.body.providerSessionId || request.body.apiKey || !admin) {
+      // Manual or Discovered Wasender session entry (individual key or imported number)
+      const rawPhone = request.body.phone || request.body.providerSessionId || "";
+      const provSessionId = rawPhone ? normalizePhoneNumber(rawPhone) : String(request.body.providerSessionId || Date.now());
       const apiKeyEncrypted = request.body.apiKey ? encryptSecret(request.body.apiKey.trim()) : null;
       const webhookSecretEncrypted = request.body.webhookSecret ? encryptSecret(request.body.webhookSecret.trim()) : null;
       const config = request.body.providerConfig || {};
+      const status = (request.body as any).status || (request.body.apiKey ? "connected" : "disconnected");
 
       const info = await queryRun(
         dbClient,
         `INSERT INTO sessions (name, provider, provider_session_id, status, api_key_encrypted, webhook_secret, provider_config)
-         VALUES (?, 'wasender', ?, 'disconnected', ?, ?, ?)`,
-        [name, provSessionId, apiKeyEncrypted, webhookSecretEncrypted, jsonToDb(dbClient, config)],
+         VALUES (?, 'wasender', ?, ?, ?, ?, ?)
+         ON CONFLICT(provider, provider_session_id) DO UPDATE SET
+           name = excluded.name, status = excluded.status,
+           api_key_encrypted = excluded.api_key_encrypted, webhook_secret = excluded.webhook_secret,
+           provider_config = excluded.provider_config`,
+        [name, provSessionId, status, apiKeyEncrypted, webhookSecretEncrypted, jsonToDb(dbClient, config)],
       );
       const createdId = info.lastInsertRowid ?? 0;
       const row = await queryGet(
         dbClient,
-        "SELECT id, name, provider, provider_session_id, status, api_key_encrypted, webhook_secret, provider_config, created_at FROM sessions WHERE id = ?",
-        [createdId],
+        "SELECT id, name, provider, provider_session_id, status, api_key_encrypted, webhook_secret, provider_config, created_at FROM sessions WHERE (id = ? OR (provider = 'wasender' AND provider_session_id = ?)) ORDER BY id DESC LIMIT 1",
+        [createdId, provSessionId],
       );
       return reply.code(201).send(formatSession(row));
     }
 
-    // Wasender remote creation via admin API
+    // Wasender remote creation via admin API (QR code generation)
     try {
       const base = process.env.PUBLIC_BASE_URL;
       const webhookUrl = base ? `${base.replace(/\/$/, "")}/webhooks/wasender/{id}` : undefined;
       const created = await admin.createSession(name, webhookUrl);
       await upsertSession(dbClient, created);
-      const local = (await queryGet(dbClient, "SELECT id, name, provider, provider_session_id, status, api_key_encrypted, webhook_secret, provider_config, created_at FROM sessions WHERE provider_session_id = ?", [
+      const local = (await queryGet(dbClient, "SELECT id, name, provider, provider_session_id, status, api_key_encrypted, webhook_secret, provider_config, created_at FROM sessions WHERE provider = 'wasender' AND provider_session_id = ?", [
         String(created.id),
       ])) as any;
       return reply.code(201).send(formatSession(local));
@@ -1354,13 +1365,70 @@ export function registerApiRoutes(
     return { ok: true };
   });
 
-  // Periskope Phone Discovery endpoint
+  // Multi-Provider Phone Discovery endpoint (Wasender & Periskope)
+  app.get<{ Params: { provider: string }; Querystring: { apiKey?: string; sessionId?: string } }>(
+    "/api/providers/:provider/phones",
+    async (request, reply) => {
+      const provider = request.params.provider.toLowerCase();
+      let apiKey = request.query.apiKey?.trim();
+      if (!apiKey && request.query.sessionId) {
+        const row = (await queryGet(dbClient, "SELECT api_key_encrypted FROM sessions WHERE id = ?", [Number(request.query.sessionId)])) as any;
+        if (row?.api_key_encrypted) apiKey = decryptSecret(row.api_key_encrypted);
+      }
+
+      if (provider === "wasender") {
+        const pat = apiKey || process.env.WASENDER_PAT;
+        if (!pat) {
+          return reply.code(400).send({ error: "Wasender PAT or apiKey is required" });
+        }
+        try {
+          const wasenderAdmin = makeWasenderAdmin(pat);
+          const sessions = await wasenderAdmin.listSessions();
+          const phones = sessions.map((s) => ({
+            phone: s.phone_number ? normalizePhoneNumber(s.phone_number) : String(s.id),
+            phoneId: String(s.id),
+            phoneName: s.name,
+            status: s.status,
+            apiKey: s.api_key,
+            isReady: s.status.toLowerCase() === "connected" || s.status.toLowerCase() === "working",
+          }));
+          return { phones };
+        } catch (err) {
+          request.log.error(err);
+          return reply.code(502).send({ error: "Could not fetch sessions from Wasender", details: String(err) });
+        }
+      }
+
+      if (provider === "periskope") {
+        if (!apiKey) apiKey = process.env.PERISKOPE_API_KEY;
+        if (!apiKey) {
+          return reply.code(400).send({ error: "apiKey or sessionId with key is required" });
+        }
+
+        const adapter = getProviderAdapter("periskope");
+        if (!adapter.listConnectedPhones) {
+          return reply.code(501).send({ error: "listConnectedPhones is not supported by this provider" });
+        }
+        try {
+          const phones = await adapter.listConnectedPhones({ apiKey });
+          return { phones };
+        } catch (err) {
+          request.log.error(err);
+          return reply.code(502).send({ error: "Could not fetch connected phones from Periskope", details: String(err) });
+        }
+      }
+
+      return reply.code(400).send({ error: `Unsupported provider: ${provider}` });
+    },
+  );
+
+  // Backward-compatible alias for Periskope
   app.get<{ Querystring: { apiKey?: string; sessionId?: string } }>(
     "/api/providers/periskope/phones",
     async (request, reply) => {
       let apiKey = request.query.apiKey?.trim();
       if (!apiKey && request.query.sessionId) {
-        const row = await queryGet(dbClient, "SELECT api_key_encrypted FROM sessions WHERE id = ?", [Number(request.query.sessionId)]) as any;
+        const row = (await queryGet(dbClient, "SELECT api_key_encrypted FROM sessions WHERE id = ?", [Number(request.query.sessionId)])) as any;
         if (row?.api_key_encrypted) apiKey = decryptSecret(row.api_key_encrypted);
       }
       if (!apiKey) apiKey = process.env.PERISKOPE_API_KEY;
@@ -1368,7 +1436,10 @@ export function registerApiRoutes(
         return reply.code(400).send({ error: "apiKey or sessionId with key is required" });
       }
 
-      const adapter = getProviderAdapter("periskope") as any;
+      const adapter = getProviderAdapter("periskope");
+      if (!adapter.listConnectedPhones) {
+        return reply.code(501).send({ error: "listConnectedPhones is not supported by this provider" });
+      }
       try {
         const phones = await adapter.listConnectedPhones({ apiKey });
         return { phones };

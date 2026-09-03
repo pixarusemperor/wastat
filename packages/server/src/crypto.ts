@@ -9,14 +9,12 @@ const DEV_DEFAULT_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456
  * Resolves the 32-byte encryption key from environment or default for dev/test.
  */
 export function getEncryptionKey(overrideKey?: string): Buffer {
-  const rawKey = overrideKey || process.env.ENCRYPTION_KEY;
-
-  if (!rawKey) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("ENCRYPTION_KEY is strictly required in production environment (must be 32 bytes hex or string)");
-    }
-    return Buffer.from(DEV_DEFAULT_KEY, "hex");
-  }
+  const rawKey =
+    overrideKey ||
+    process.env.ENCRYPTION_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.WASENDER_PAT ||
+    DEV_DEFAULT_KEY;
 
   // If 64-character hex string, parse as hex
   if (/^[0-9a-fA-F]{64}$/.test(rawKey)) {

@@ -249,4 +249,8 @@ export class WasenderProviderAdapter implements WhatsAppProviderAdapter {
     const numId = Number(session.providerSessionId) || 0;
     await admin.deleteSession(numId).catch(() => {});
   }
+
+  async listConnectedPhones(_session: { apiKey?: string; baseUrl?: string }): Promise<Array<{ phone: string; phoneId?: string; phoneName?: string; status: string; isReady: boolean }>> {
+    return [];
+  }
 }

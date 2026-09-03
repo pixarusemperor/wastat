@@ -137,4 +137,33 @@ describe("PeriskopeProviderAdapter", () => {
       expect(readAck?.ack?.status).toBe("read");
     });
   });
+
+  describe("listConnectedPhones", () => {
+    it("fetches and normalizes connected phones list from Periskope", async () => {
+      const origFetch = global.fetch;
+      try {
+        global.fetch = (async () => ({
+          ok: true,
+          json: async () => [
+            {
+              org_phone: "237652474378@c.us",
+              phone_id: "phone-gpyjlndjmsqsobrh",
+              phone_name: "Safari",
+              wa_state: "CONNECTED",
+              is_ready: true,
+            },
+          ],
+        })) as any;
+
+        const phones = await adapter.listConnectedPhones({ apiKey: "prsk_test" });
+        expect(phones).toHaveLength(1);
+        expect(phones[0].phone).toBe("237652474378");
+        expect(phones[0].phoneName).toBe("Safari");
+        expect(phones[0].status).toBe("CONNECTED");
+        expect(phones[0].isReady).toBe(true);
+      } finally {
+        global.fetch = origFetch;
+      }
+    });
+  });
 });

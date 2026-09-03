@@ -149,6 +149,15 @@ export interface SessionItem {
   createdAt?: string;
 }
 
+export interface DiscoveredPhone {
+  phone: string;
+  phoneId?: string;
+  phoneName?: string;
+  status?: string;
+  apiKey?: string;
+  isReady?: boolean;
+}
+
 export const api = {
   listProducts: () => fetch("/api/products").then((r) => json<Product[]>(r)),
   createProduct: (data: {
@@ -265,6 +274,7 @@ export const api = {
           provider?: "wasender" | "periskope";
           phone?: string;
           providerSessionId?: string;
+          status?: string;
           apiKey?: string;
           webhookSecret?: string;
           providerConfig?: Record<string, unknown>;
@@ -294,13 +304,16 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     }).then((r) => json<SessionItem>(r)),
-  listPeriskopePhones: (apiKey?: string, sessionId?: number) => {
+  listProviderPhones: (provider: "wasender" | "periskope", apiKey?: string, sessionId?: number) => {
     const params = new URLSearchParams();
     if (apiKey) params.set("apiKey", apiKey);
     if (sessionId) params.set("sessionId", String(sessionId));
-    return fetch(`/api/providers/periskope/phones?${params.toString()}`).then((r) =>
-      json<{ phones: Array<{ phone: string; name?: string; status?: string }> }>(r),
+    return fetch(`/api/providers/${provider}/phones?${params.toString()}`).then((r) =>
+      json<{ phones: DiscoveredPhone[] }>(r),
     );
+  },
+  listPeriskopePhones: (apiKey?: string, sessionId?: number) => {
+    return api.listProviderPhones("periskope", apiKey, sessionId);
   },
   connectSession: (id: number) =>
     fetch(`/api/sessions/${id}/connect`, { method: "POST" }).then((r) =>

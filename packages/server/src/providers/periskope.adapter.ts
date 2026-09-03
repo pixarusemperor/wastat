@@ -313,6 +313,46 @@ export class PeriskopeProviderAdapter implements WhatsAppProviderAdapter {
     };
   }
 
+  async listConnectedPhones(session: { apiKey?: string; baseUrl?: string }): Promise<Array<{ phone: string; phoneId?: string; phoneName?: string; status: string; isReady: boolean }>> {
+    const baseUrl = session.baseUrl || this.getBaseUrl();
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${session.apiKey}`,
+    };
+
+    let res = await fetch(`${baseUrl}/phones/all`, {
+      method: "GET",
+      headers,
+    });
+
+    if (!res.ok) {
+      res = await fetch(`${baseUrl}/phones`, {
+        method: "GET",
+        headers,
+      });
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Periskope API returned HTTP ${res.status}: ${text}`);
+    }
+
+    const data: any = await res.json().catch(() => ({}));
+    const list = Array.isArray(data) ? data : data.phones || [data];
+    return list
+      .map((p: any) => {
+        const rawPhone = p.org_phone || p.phone || p.phone_id || "";
+        const clean = normalizePhoneNumber(String(rawPhone).replace(/@(c|g)\.us$/, ""));
+        return {
+          phone: clean || rawPhone,
+          phoneId: p.phone_id,
+          phoneName: p.phone_name,
+          status: (p.wa_state || p.status || "DISCONNECTED").toUpperCase(),
+          isReady: Boolean(p.is_ready),
+        };
+      })
+      .filter((p: any) => Boolean(p.phone));
+  }
+
   async getSessionStatus(session: SessionContext): Promise<SessionStatusResult> {
     const baseUrl = this.getBaseUrl();
     const orgPhone = this.getOrgPhone(session);

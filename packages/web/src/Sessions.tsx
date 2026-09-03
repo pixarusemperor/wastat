@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
-import { api, type SessionItem } from "./api.js";
+import { api, type SessionItem, type DiscoveredPhone } from "./api.js";
 import { Dialog } from "./ui.js";
 
 type SessionRow = SessionItem;
@@ -178,6 +178,33 @@ export function SessionsPage() {
                   >
                     {isPeriskope ? "Periskope" : "Wasender"}
                   </span>
+                  {s.providerConfig?.keyType === "individual" ? (
+                    <span
+                      className="pill"
+                      style={{
+                        background: "rgba(245, 158, 11, 0.15)",
+                        color: "#f59e0b",
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                      }}
+                      title="Single-number dedicated API key"
+                    >
+                      Individual Key
+                    </span>
+                  ) : (
+                    <span
+                      className="pill"
+                      style={{
+                        background: "rgba(6, 182, 212, 0.15)",
+                        color: "#06b6d4",
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                      }}
+                      title="Multi-number account/organization API key"
+                    >
+                      Multi-Number
+                    </span>
+                  )}
                   <span style={{ color: "var(--muted)", fontSize: "0.8125rem" }}>
                     {isPeriskope ? `Phone: ${s.providerSessionId}` : `ID: ${s.providerSessionId}`}
                   </span>
@@ -546,41 +573,61 @@ function CreateSessionForm({
   onCancel: () => void;
   onCreated: (created?: SessionItem) => void;
 }) {
-  const [provider, setProvider] = useState<"wasender" | "periskope">("wasender");
+  const [provider, setProvider] = useState<"wasender" | "periskope">("periskope");
+  const [keyType, setKeyType] = useState<"multi_number" | "individual">("multi_number");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [individualApiKey, setIndividualApiKey] = useState("");
   const [webhookSecret, setWebhookSecret] = useState("");
   const [fetchingPhones, setFetchingPhones] = useState(false);
-  const [discoveredPhones, setDiscoveredPhones] = useState<string[]>([]);
+  const [discoveredPhones, setDiscoveredPhones] = useState<DiscoveredPhone[]>([]);
+  const [selectedPhoneIndex, setSelectedPhoneIndex] = useState<number>(-1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setTimeout(() => inputRef.current?.focus(), 0);
-  }, [provider]);
+  }, [provider, keyType]);
 
   async function fetchPhones() {
     if (!apiKey.trim()) {
-      setError("Please enter a Periskope API Key first to fetch connected phones.");
+      setError(
+        provider === "periskope"
+          ? "Please enter your Periskope Organization API Key first to fetch connected numbers."
+          : "Please enter your Wasender Account PAT first to fetch numbers.",
+      );
       return;
     }
     setError(null);
     setFetchingPhones(true);
     try {
-      const res = await api.listPeriskopePhones(apiKey.trim());
-      const phones = res.phones.map((p) => p.phone);
-      setDiscoveredPhones(phones);
-      if (phones.length > 0 && !phone) {
-        setPhone(phones[0]);
-      } else if (phones.length === 0) {
-        setError("No connected phones found in this Periskope organization.");
+      const res = await api.listProviderPhones(provider, apiKey.trim());
+      setDiscoveredPhones(res.phones);
+      if (res.phones.length > 0) {
+        setSelectedPhoneIndex(0);
+        const p0 = res.phones[0];
+        setPhone(p0.phone);
+        if (!name) setName(p0.phoneName || `WhatsApp ${p0.phone}`);
+        if (p0.apiKey) setIndividualApiKey(p0.apiKey);
+      } else {
+        setError(`No connected numbers found for this ${provider === "periskope" ? "Periskope" : "Wasender"} account.`);
       }
     } catch (err) {
-      setError(`Could not fetch phones: ${err}`);
+      setError(`Could not fetch numbers: ${err}`);
     } finally {
       setFetchingPhones(false);
+    }
+  }
+
+  function handleSelectPhone(index: number) {
+    setSelectedPhoneIndex(index);
+    const p = discoveredPhones[index];
+    if (p) {
+      setPhone(p.phone);
+      setName(p.phoneName || `WhatsApp ${p.phone}`);
+      if (p.apiKey) setIndividualApiKey(p.apiKey);
     }
   }
 
@@ -592,13 +639,24 @@ function CreateSessionForm({
     setBusy(true);
 
     try {
+      const activeKey = keyType === "individual"
+        ? (individualApiKey.trim() || apiKey.trim())
+        : (individualApiKey.trim() || apiKey.trim());
+
+      const isDiscoveredReady = selectedPhoneIndex >= 0 && Boolean(discoveredPhones[selectedPhoneIndex]?.isReady);
+
       const created = await api.createSession({
         name: trimmedName,
         provider,
-        phone: provider === "periskope" ? phone.trim() : undefined,
-        apiKey: apiKey.trim() || undefined,
+        phone: phone.trim() || undefined,
+        apiKey: activeKey || undefined,
         webhookSecret: webhookSecret.trim() || undefined,
-        providerConfig: provider === "periskope" ? { orgPhone: phone.trim() } : undefined,
+        status: isDiscoveredReady ? "connected" : undefined,
+        providerConfig: {
+          keyType,
+          orgPhone: phone.trim(),
+          multiNumberKey: keyType === "multi_number" ? apiKey.trim() : undefined,
+        },
       });
       onCreated(created);
     } catch (err) {
@@ -612,7 +670,7 @@ function CreateSessionForm({
     <form className="modal-body" onSubmit={submit}>
       <p className="modal-title">Add a WhatsApp session</p>
       <p className="page-subtitle" style={{ margin: "0.25rem 0 1rem" }}>
-        Select your underlying transport provider and connect numbers.
+        Configure single-number or multi-number sessions across Wasender and Periskope.
       </p>
 
       {error && (
@@ -634,111 +692,200 @@ function CreateSessionForm({
       >
         <button
           type="button"
-          className={`btn btn-sm ${provider === "wasender" ? "btn-primary" : "btn-ghost"}`}
+          className={`btn btn-sm ${provider === "periskope" ? "btn-primary" : "btn-ghost"}`}
           style={{ flex: 1 }}
-          onClick={() => setProvider("wasender")}
+          onClick={() => {
+            setProvider("periskope");
+            setDiscoveredPhones([]);
+            setSelectedPhoneIndex(-1);
+          }}
         >
-          Wasender (QR Code)
+          Periskope
         </button>
         <button
           type="button"
-          className={`btn btn-sm ${provider === "periskope" ? "btn-primary" : "btn-ghost"}`}
+          className={`btn btn-sm ${provider === "wasender" ? "btn-primary" : "btn-ghost"}`}
           style={{ flex: 1 }}
-          onClick={() => setProvider("periskope")}
+          onClick={() => {
+            setProvider("wasender");
+            setDiscoveredPhones([]);
+            setSelectedPhoneIndex(-1);
+          }}
         >
-          Periskope (API & Phone)
+          Wasender
         </button>
       </div>
 
-      <label className="field-label" htmlFor="session-name">
-        Session name
-      </label>
-      <input
-        ref={inputRef}
-        id="session-name"
-        className="input"
-        placeholder='e.g. "Sales Desk 1"'
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        required
-      />
+      {/* Key Scope: Multi-Number (Org/Account Key) vs Individual Per-Number Key */}
+      <div style={{ marginBottom: "1rem" }}>
+        <label className="field-label" style={{ marginBottom: "0.375rem" }}>
+          API Key Type
+        </label>
+        <div
+          style={{
+            display: "flex",
+            gap: "0.5rem",
+            background: "var(--surface-sunken)",
+            padding: "0.25rem",
+            borderRadius: "var(--radius-sm)",
+          }}
+        >
+          <button
+            type="button"
+            className={`btn btn-sm ${keyType === "multi_number" ? "btn-primary" : "btn-ghost"}`}
+            style={{ flex: 1, fontSize: "0.8125rem" }}
+            onClick={() => setKeyType("multi_number")}
+          >
+            🏢 Multi-Number (Account Key)
+          </button>
+          <button
+            type="button"
+            className={`btn btn-sm ${keyType === "individual" ? "btn-primary" : "btn-ghost"}`}
+            style={{ flex: 1, fontSize: "0.8125rem" }}
+            onClick={() => setKeyType("individual")}
+          >
+            📱 Individual (Single Number Key)
+          </button>
+        </div>
+      </div>
 
-      {provider === "periskope" && (
-        <>
-          <label className="field-label" htmlFor="periskope-api-key" style={{ marginTop: "0.75rem" }}>
-            Periskope API Key
-          </label>
+      {/* Mode A: Multi-Number Account Key with Auto-Discovery */}
+      {keyType === "multi_number" && (
+        <div
+          style={{
+            background: "var(--surface-sunken)",
+            border: "1px solid var(--border-subtle, rgba(255,255,255,0.08))",
+            padding: "0.875rem",
+            borderRadius: "var(--radius-sm)",
+            marginBottom: "1rem",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.375rem" }}>
+            <label className="field-label" htmlFor="multi-account-key" style={{ margin: 0 }}>
+              {provider === "periskope" ? "Periskope Organization API Key" : "Wasender Account PAT"}
+            </label>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              style={{ fontSize: "0.75rem", fontWeight: 600 }}
+              disabled={fetchingPhones || !apiKey.trim()}
+              onClick={fetchPhones}
+            >
+              {fetchingPhones ? "Fetching…" : "🔍 Discover Numbers"}
+            </button>
+          </div>
           <input
-            id="periskope-api-key"
+            id="multi-account-key"
             type="text"
             className="input"
-            placeholder="prsk_live_..."
+            placeholder={provider === "periskope" ? "sk_periskope_... or prsk_..." : "wasender_pat_..."}
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             required
           />
 
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "0.75rem" }}>
-            <label className="field-label" htmlFor="periskope-phone" style={{ margin: 0 }}>
-              Connected Phone Number
-            </label>
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              style={{ fontSize: "0.75rem" }}
-              disabled={fetchingPhones || !apiKey.trim()}
-              onClick={fetchPhones}
-            >
-              {fetchingPhones ? "Fetching…" : "🔍 Discover Phones"}
-            </button>
-          </div>
-
-          {discoveredPhones.length > 0 ? (
-            <select
-              id="periskope-phone"
-              className="input"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              required
-            >
-              <option value="">Select a connected phone…</option>
-              {discoveredPhones.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <input
-              id="periskope-phone"
-              className="input"
-              placeholder="+1234567890"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              required
-            />
+          {discoveredPhones.length > 0 && (
+            <div style={{ marginTop: "0.75rem" }}>
+              <label className="field-label" htmlFor="discovered-number-select">
+                Select Connected Number ({discoveredPhones.length} found)
+              </label>
+              <select
+                id="discovered-number-select"
+                className="input"
+                value={selectedPhoneIndex}
+                onChange={(e) => handleSelectPhone(Number(e.target.value))}
+              >
+                {discoveredPhones.map((p, idx) => (
+                  <option key={p.phone || idx} value={idx}>
+                    {p.phoneName ? `${p.phoneName} — ` : ""}{p.phone} ({p.status || "READY"})
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
+        </div>
+      )}
 
-          <label className="field-label" htmlFor="periskope-webhook-secret" style={{ marginTop: "0.75rem" }}>
-            Webhook Signing Secret (Optional HMAC verification)
+      {/* Session Name */}
+      <label className="field-label" htmlFor="session-name">
+        Session Name
+      </label>
+      <input
+        ref={inputRef}
+        id="session-name"
+        className="input"
+        placeholder='e.g. "Dubai Sales Desk"'
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        required
+      />
+
+      {/* Mode B: Individual Per-Number Key */}
+      {keyType === "individual" && (
+        <>
+          <label className="field-label" htmlFor="individual-api-key" style={{ marginTop: "0.75rem" }}>
+            {provider === "periskope" ? "Periskope Dedicated Phone API Key" : "Wasender Session API Key"}
           </label>
           <input
-            id="periskope-webhook-secret"
+            id="individual-api-key"
             type="text"
             className="input"
-            placeholder="whsec_..."
-            value={webhookSecret}
-            onChange={(e) => setWebhookSecret(e.target.value)}
+            placeholder="Paste individual API key for this specific number..."
+            value={individualApiKey}
+            onChange={(e) => setIndividualApiKey(e.target.value)}
+            required
+          />
+
+          <label className="field-label" htmlFor="phone-number" style={{ marginTop: "0.75rem" }}>
+            WhatsApp Phone Number (with country code)
+          </label>
+          <input
+            id="phone-number"
+            className="input"
+            placeholder="+1234567890"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            required
           />
         </>
       )}
+
+      {/* Phone Number Display / Edit for Multi-Number Mode */}
+      {keyType === "multi_number" && (
+        <>
+          <label className="field-label" htmlFor="bound-phone" style={{ marginTop: "0.75rem" }}>
+            Assigned Phone Number
+          </label>
+          <input
+            id="bound-phone"
+            className="input"
+            placeholder={provider === "periskope" ? "+1234567890" : "Auto-detected or enter manually"}
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            required={provider === "periskope"}
+          />
+        </>
+      )}
+
+      {/* Webhook Secret */}
+      <label className="field-label" htmlFor="session-webhook-secret" style={{ marginTop: "0.75rem" }}>
+        Webhook Signing Secret (Optional HMAC verification)
+      </label>
+      <input
+        id="session-webhook-secret"
+        type="text"
+        className="input"
+        placeholder="whsec_..."
+        value={webhookSecret}
+        onChange={(e) => setWebhookSecret(e.target.value)}
+      />
 
       <div className="modal-actions" style={{ marginTop: "1.25rem" }}>
         <button type="button" className="btn" onClick={onCancel}>
           Cancel
         </button>
         <button type="submit" className="btn btn-primary" disabled={!name.trim() || busy}>
-          {busy ? "Creating…" : provider === "periskope" ? "Save Session" : "Create & Connect"}
+          {busy ? "Saving…" : "Save & Connect Session"}
         </button>
       </div>
     </form>
@@ -755,7 +902,11 @@ function EditSessionModal({
   onSaved: () => void;
 }) {
   const [name, setName] = useState(session.name);
+  const [keyType, setKeyType] = useState<"multi_number" | "individual">(
+    session.providerConfig?.keyType === "individual" ? "individual" : "multi_number"
+  );
   const [apiKey, setApiKey] = useState("");
+  const [phone, setPhone] = useState(session.providerSessionId || "");
   const [webhookSecret, setWebhookSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -769,8 +920,14 @@ function EditSessionModal({
     try {
       await api.patchSession(session.id, {
         name: name.trim(),
+        providerSessionId: phone.trim() || undefined,
         apiKey: apiKey.trim() || undefined,
         webhookSecret: webhookSecret.trim() || undefined,
+        providerConfig: {
+          ...(session.providerConfig || {}),
+          keyType,
+          orgPhone: phone.trim(),
+        },
       });
       onSaved();
     } catch (err) {
@@ -793,6 +950,39 @@ function EditSessionModal({
         </div>
       )}
 
+      {/* Key Scope */}
+      <div style={{ marginBottom: "1rem" }}>
+        <label className="field-label" style={{ marginBottom: "0.375rem" }}>
+          API Key Scope
+        </label>
+        <div
+          style={{
+            display: "flex",
+            gap: "0.5rem",
+            background: "var(--surface-sunken)",
+            padding: "0.25rem",
+            borderRadius: "var(--radius-sm)",
+          }}
+        >
+          <button
+            type="button"
+            className={`btn btn-sm ${keyType === "multi_number" ? "btn-primary" : "btn-ghost"}`}
+            style={{ flex: 1, fontSize: "0.8125rem" }}
+            onClick={() => setKeyType("multi_number")}
+          >
+            🏢 Multi-Number Key
+          </button>
+          <button
+            type="button"
+            className={`btn btn-sm ${keyType === "individual" ? "btn-primary" : "btn-ghost"}`}
+            style={{ flex: 1, fontSize: "0.8125rem" }}
+            onClick={() => setKeyType("individual")}
+          >
+            📱 Individual Per-Number Key
+          </button>
+        </div>
+      </div>
+
       <label className="field-label" htmlFor="edit-session-name">
         Session Name
       </label>
@@ -801,6 +991,17 @@ function EditSessionModal({
         className="input"
         value={name}
         onChange={(e) => setName(e.target.value)}
+        required
+      />
+
+      <label className="field-label" htmlFor="edit-session-phone" style={{ marginTop: "0.75rem" }}>
+        Phone Number / Identifier
+      </label>
+      <input
+        id="edit-session-phone"
+        className="input"
+        value={phone}
+        onChange={(e) => setPhone(e.target.value)}
         required
       />
 

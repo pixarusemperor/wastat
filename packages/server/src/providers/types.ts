@@ -109,4 +109,5 @@ export interface WhatsAppProviderAdapter {
   registerWebhook?(session: SessionContext, url: string): Promise<void>;
   deleteSession?(session: SessionContext): Promise<void>;
   purgeQueue?(session: SessionContext, options?: { all?: boolean }): Promise<void>;
+  listConnectedPhones?(session: { apiKey?: string; baseUrl?: string }): Promise<Array<{ phone: string; phoneId?: string; phoneName?: string; status: string; isReady: boolean }>>;
 }
